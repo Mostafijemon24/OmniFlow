@@ -3,22 +3,33 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import { Profile } from "@/lib/types";
 import { initialsAvatar } from "@/lib/format";
 
-const nav = [
+type NavItem = {
+  href: string;
+  label: string;
+  icon: string;
+  counter?: string;
+  adminOnly?: boolean;
+};
+
+const nav: NavItem[] = [
   { href: "/dashboard", label: "Bio Store Builder", icon: "fa-store" },
   { href: "/dashboard/auto-dm", label: "Comment Auto-DM", icon: "fa-robot" },
   { href: "/dashboard/orders", label: "Orders & CRM", icon: "fa-receipt", counter: "orders" },
   { href: "/dashboard/analytics", label: "Funnel Analytics", icon: "fa-chart-pie" },
-  { href: "/dashboard/integrations", label: "Integrations", icon: "fa-plug", counter: "meta" },
+  { href: "/dashboard/integrations", label: "Integrations", icon: "fa-plug", adminOnly: true },
   { href: "/dashboard/billing", label: "Plan & Billing", icon: "fa-credit-card" },
 ];
 
 export function DashboardSidebar() {
   const pathname = usePathname();
+  const { data: session } = useSession();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [orderCount, setOrderCount] = useState<number | null>(null);
+  const isSuperAdmin = Boolean(session?.user?.isSuperAdmin);
 
   useEffect(() => {
     let active = true;
@@ -39,11 +50,12 @@ export function DashboardSidebar() {
   }, [pathname]);
 
   const avatar = profile?.avatar || initialsAvatar(profile?.fullName || "OmniFlow");
+  const visibleNav = nav.filter((item) => !item.adminOnly || isSuperAdmin);
 
   return (
     <aside className="space-y-4 lg:col-span-3">
       <div className="glass-card space-y-1 rounded-2xl border border-slate-800 p-3">
-        {nav.map((item) => {
+        {visibleNav.map((item) => {
           const active = pathname === item.href;
           const badge =
             item.counter === "orders"
