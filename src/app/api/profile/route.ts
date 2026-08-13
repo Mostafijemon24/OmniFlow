@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser, ownsAssetUrl, slugifyHandle } from "@/lib/utils";
-import { planOf, trialDaysLeft } from "@/lib/plans";
+import { effectivePlanOf, planOf, trialDaysLeft } from "@/lib/plans";
+import { planNotice } from "@/lib/subscriptions";
+import { isSuperAdminEmail } from "@/lib/admin";
 
 const schema = z.object({
   fullName: z.string().min(2).max(80).optional(),
@@ -20,7 +22,10 @@ export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  // `plan` is what the creator bought; `effective` is what currently applies,
+  // which differs once a manually paid period has lapsed.
   const plan = planOf(user.plan);
+  const effective = effectivePlanOf(user);
   const [productCount, metaAccounts] = await Promise.all([
     prisma.product.count({ where: { userId: user.id } }),
     prisma.metaAccount.count({ where: { userId: user.id } }),
@@ -41,10 +46,14 @@ export async function GET() {
     plan: user.plan,
     planName: plan.name,
     planStatus: user.planStatus,
+    planPeriodEnd: user.planPeriodEnd,
+    planNotice: planNotice(user),
+    effectivePlanName: effective.name,
     trialDaysLeft: trialDaysLeft(user.trialEndsAt),
-    maxProducts: Number.isFinite(plan.maxProducts) ? plan.maxProducts : null,
+    maxProducts: effective.maxProducts,
     productCount,
     metaAccounts,
+    isSuperAdmin: isSuperAdminEmail(user.email),
   });
 }
 

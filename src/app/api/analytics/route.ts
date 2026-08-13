@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/utils";
-import { monthStart, planOf } from "@/lib/plans";
+import { effectivePlanOf, monthStart } from "@/lib/plans";
 
 const RANGES = [7, 30, 90];
 
@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
-  const plan = planOf(user.plan);
+  const plan = effectivePlanOf(user);
   const ordersClosed = revenue.reduce((sum, row) => sum + row._count._all, 0);
   const rate = (denominator: number) =>
     denominator ? Number(((ordersClosed / denominator) * 100).toFixed(1)) : null;

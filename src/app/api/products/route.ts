@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser, ownsAssetUrl, ownsUpload } from "@/lib/utils";
-import { planOf } from "@/lib/plans";
+import { effectivePlanOf } from "@/lib/plans";
 
 const schema = z
   .object({
@@ -53,7 +53,9 @@ export async function POST(req: Request) {
     );
   }
 
-  const plan = planOf(user.plan);
+  // A lapsed manual plan falls back to Starter limits, otherwise one payment
+  // would buy Pro forever.
+  const plan = effectivePlanOf(user);
   const count = await prisma.product.count({ where: { userId: user.id } });
   if (count >= plan.maxProducts) {
     return NextResponse.json(

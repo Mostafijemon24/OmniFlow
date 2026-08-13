@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { prisma } from "./prisma";
 import { decrypt } from "./crypto";
 import { appUrl, storeUrl } from "./utils";
-import { monthStart, planOf } from "./plans";
+import { effectivePlanOf, monthStart } from "./plans";
 
 export const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v21.0";
 export const GRAPH_API = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -280,7 +280,7 @@ export async function processComment(comment: IncomingComment) {
   if (!matched) return { status: "no_match" as const };
   if (!matched.targetProduct.active) return { status: "product_inactive" as const };
 
-  const plan = planOf(account.user.plan);
+  const plan = effectivePlanOf(account.user);
   const sentThisMonth = await prisma.dmLog.count({
     where: {
       userId: account.userId,

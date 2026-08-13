@@ -39,10 +39,26 @@ export type Profile = {
   plan?: string;
   planName?: string;
   planStatus?: string;
+  planPeriodEnd?: string | null;
+  planNotice?: { level: "active" | "expiring" | "expired"; message: string } | null;
+  effectivePlanName?: string;
   trialDaysLeft?: number;
   maxProducts?: number | null;
   productCount?: number;
   metaAccounts?: number;
+  isSuperAdmin?: boolean;
+};
+
+export type ManualPayment = {
+  id: string;
+  plan: string | null;
+  trxId: string;
+  amountCents: number;
+  currency: string;
+  status: string;
+  reviewNote: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
 };
 
 export type MetaAccount = {

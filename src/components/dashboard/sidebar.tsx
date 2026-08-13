@@ -115,6 +115,19 @@ export function DashboardSidebar() {
             </p>
           )}
 
+          {profile.planNotice && profile.planNotice.level !== "active" && (
+            <Link
+              href="/dashboard/plans"
+              className={`block rounded-lg px-2 py-1.5 text-[10px] font-semibold ${
+                profile.planNotice.level === "expired"
+                  ? "bg-red-500/10 text-red-400"
+                  : "bg-amber-500/10 text-amber-400"
+              }`}
+            >
+              {profile.planNotice.message}
+            </Link>
+          )}
+
           <Link
             href={`/${profile.username}`}
             target="_blank"
