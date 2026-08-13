@@ -15,6 +15,8 @@ type Fulfillment = {
   startsAt?: string;
 };
 
+type GatewayMap = Record<string, { stripe: boolean; bkash: boolean }>;
+
 export function PublicStore({
   profile,
   products,
@@ -22,7 +24,8 @@ export function PublicStore({
 }: {
   profile: Profile;
   products: Product[];
-  gateways: { stripe: boolean; bkash: boolean };
+  /** Availability per product currency symbol, resolved on the server. */
+  gateways: GatewayMap;
 }) {
   const { triggerToast } = useUi();
   const router = useRouter();
@@ -33,7 +36,7 @@ export function PublicStore({
     name: "",
     email: "",
     phone: "",
-    gateway: (gateways.stripe ? "Stripe" : "bKash") as Gateway,
+    gateway: "Stripe" as Gateway,
     slotId: "",
   });
   const [submitting, setSubmitting] = useState(false);
@@ -85,13 +88,29 @@ export function PublicStore({
     }
   }, [searchParams, products, confirmOrder, triggerToast]);
 
+  const gatewaysFor = useCallback(
+    (product: Product) => gateways[product.currency] ?? { stripe: false, bkash: false },
+    [gateways]
+  );
+
+  /** Free products need no gateway, so they stay available regardless. */
+  const purchasable = useCallback(
+    (product: Product) => {
+      if (product.price === 0) return true;
+      const gw = gatewaysFor(product);
+      return gw.stripe || gw.bkash;
+    },
+    [gatewaysFor]
+  );
+
   function openCheckout(product: Product) {
     setError("");
     setFulfillment(null);
+    const gw = gatewaysFor(product);
     setForm((f) => ({
       ...f,
       slotId: product.slots?.find((s) => !s.booked)?.id || "",
-      gateway: product.currency === "৳" && gateways.bkash ? "bKash" : f.gateway,
+      gateway: gw.stripe ? "Stripe" : "bKash",
     }));
     setCheckoutProduct(product);
   }
@@ -143,7 +162,10 @@ export function PublicStore({
   }
 
   const avatar = profile.avatar || initialsAvatar(profile.fullName);
-  const noGateway = !gateways.stripe && !gateways.bkash;
+  const checkoutGateways = checkoutProduct
+    ? gatewaysFor(checkoutProduct)
+    : { stripe: false, bkash: false };
+  const noGateway = !checkoutGateways.stripe && !checkoutGateways.bkash;
 
   return (
     <div className="mx-auto w-full max-w-xl flex-1 space-y-6 p-4 md:p-6">
@@ -204,6 +226,7 @@ export function PublicStore({
         {products.map((prod) => {
           const openSlots = prod.slots?.filter((s) => !s.booked) ?? [];
           const soldOut = prod.type === "consultation" && openSlots.length === 0;
+          const buyable = purchasable(prod);
 
           return (
             <div
@@ -234,13 +257,18 @@ export function PublicStore({
                     </span>
                   )}
                 </div>
+                {!buyable && (
+                  <p className="mt-1 text-[10px] font-semibold text-amber-400">
+                    Not available for purchase yet
+                  </p>
+                )}
               </div>
               <button
                 onClick={() => openCheckout(prod)}
-                disabled={soldOut}
+                disabled={soldOut || !buyable}
                 className="rounded-xl bg-brand-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-brand-600/20 transition hover:bg-brand-500 disabled:opacity-50"
               >
-                {soldOut ? "Sold out" : prod.price === 0 ? "Get" : "Buy Now"}
+                {soldOut ? "Sold out" : !buyable ? "Unavailable" : prod.price === 0 ? "Get" : "Buy Now"}
               </button>
             </div>
           );
@@ -344,12 +372,15 @@ export function PublicStore({
                   </label>
                   {noGateway ? (
                     <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-amber-300">
-                      This creator has not connected a payment gateway yet.
+                      Paid products are not available for purchase on OmniFlow yet. Free downloads
+                      and bookings work as normal.
                     </p>
                   ) : (
                     <div className="grid grid-cols-2 gap-2">
                       {(["Stripe", "bKash"] as Gateway[])
-                        .filter((gw) => (gw === "Stripe" ? gateways.stripe : gateways.bkash))
+                        .filter((gw) =>
+                          gw === "Stripe" ? checkoutGateways.stripe : checkoutGateways.bkash
+                        )
                         .map((gw) => (
                           <button
                             type="button"
@@ -366,9 +397,6 @@ export function PublicStore({
                         ))}
                     </div>
                   )}
-                  <p className="mt-1 text-[10px] text-slate-500">
-                    Stripe Checkout also covers Apple Pay and Google Pay on supported devices.
-                  </p>
                 </div>
               )}
 

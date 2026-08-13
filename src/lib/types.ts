@@ -52,6 +52,7 @@ export type MetaAccount = {
   platform: string;
   igUserId: string | null;
   subscribed: boolean;
+  needsReconnect: boolean;
   tokenExpiresAt: string | null;
 };
 

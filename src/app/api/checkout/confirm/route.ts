@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { creatorStripe } from "@/lib/stripe";
+import { platformStripe } from "@/lib/stripe";
 import { fulfillOrder } from "@/lib/fulfillment";
 import { safeEqual } from "@/lib/crypto";
 
@@ -21,6 +21,10 @@ function delivery(order: {
 /**
  * Verifies a Stripe Checkout session directly with Stripe before fulfilling,
  * so a redirect alone can never mark an order paid.
+ *
+ * Store products cannot currently be sold through a gateway, so in practice
+ * this only reports the state of free deliveries. The verification chain is
+ * kept whole for when store selling is switched on.
  */
 export async function GET(req: NextRequest) {
   const orderId = req.nextUrl.searchParams.get("orderId");
@@ -29,7 +33,7 @@ export async function GET(req: NextRequest) {
 
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    include: { user: true, product: true, downloadToken: true, booking: true },
+    include: { product: true, downloadToken: true, booking: true },
   });
   if (!order) return NextResponse.json({ error: "Order not found." }, { status: 404 });
 
@@ -37,10 +41,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(delivery(order));
   }
 
-  if (order.gateway !== "Stripe") {
-    return NextResponse.json({ status: order.status });
-  }
-  if (!order.gatewayRef) {
+  if (order.gateway !== "Stripe" || !order.gatewayRef) {
     return NextResponse.json({ status: order.status });
   }
 
@@ -48,13 +49,16 @@ export async function GET(req: NextRequest) {
   // when it is the session this order actually created. Without that check a
   // buyer could replay any paid session id to unlock a different order.
   if (sessionId && !safeEqual(sessionId, order.gatewayRef)) {
-    return NextResponse.json({ error: "This checkout session does not belong to the order." }, {
-      status: 409,
-    });
+    return NextResponse.json(
+      { error: "This checkout session does not belong to the order." },
+      { status: 409 }
+    );
   }
 
-  const stripe = creatorStripe(order.user.stripeSecretKey);
-  if (!stripe) return NextResponse.json({ error: "Stripe is not connected." }, { status: 409 });
+  const stripe = await platformStripe();
+  if (!stripe) {
+    return NextResponse.json({ error: "Stripe is not configured." }, { status: 409 });
+  }
 
   const session = await stripe.checkout.sessions.retrieve(order.gatewayRef);
 

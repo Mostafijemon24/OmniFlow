@@ -9,77 +9,180 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id                   String   @id @default(cuid())
-  email                String   @unique
-  passwordHash         String
-  fullName             String
-  username             String   @unique
-  headline             String?
-  bio                  String?
-  avatar               String?
-  cover                String?
-  category             String?
-  primaryGoal          String?
-  onboardingCompleted  Boolean  @default(false)
+/// Platform-wide configuration, edited by the super admin through the admin UI
+/// rather than through the environment, because a running server cannot write
+/// to its own .env. Exactly one row exists, keyed by PLATFORM_SETTINGS_ID.
+model PlatformSettings {
+  id String @id
 
-  plan                 String   @default("starter")
-  planStatus           String   @default("trialing") // trialing | active | past_due | canceled
+  // Stripe — cards for OmniFlow plan purchases.
+  stripeEnabled      Boolean @default(false)
+  stripeSecretKey    String? // encrypted
+  stripePriceStarter String?
+  stripePricePro     String?
+  stripePriceAgency  String?
+
+  // bKash — manual transfer to a personal number, verified by the admin.
+  bkashEnabled      Boolean @default(false)
+  bkashNumber       String?
+  bkashInstructions String?
+  /// BDT charged per 1 USD of plan price. Plans are priced in USD; bKash only
+  /// moves BDT, so an amount cannot be quoted without this.
+  bkashUsdRate      Float?
+
+  // Meta connector — one shared app for Facebook login and page connection.
+  metaEnabled      Boolean @default(false)
+  metaAppId        String? // public by design: it appears in the OAuth URL
+  metaAppSecret    String? // encrypted
+  metaVerifyToken  String? // encrypted
+  metaGraphVersion String  @default("v21.0")
+
+  /// Reserved for creator-store selling, which is not enabled yet. While this
+  /// is false no store gateway is offered and paid products cannot be bought.
+  storePaymentsEnabled Boolean @default(false)
+  /// Commission on creator-store sales. Unused until store selling ships.
+  platformFeePercent   Float   @default(0)
+
+  updatedByEmail String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model User {
+  id                  String  @id @default(cuid())
+  email               String  @unique
+  /// Null for accounts created through Facebook that never set a password.
+  passwordHash        String?
+  fullName            String
+  username            String  @unique
+  headline            String?
+  bio                 String?
+  avatar              String?
+  cover               String?
+  category            String?
+  primaryGoal         String?
+  onboardingCompleted Boolean @default(false)
+
+  plan                 String    @default("starter")
+  planStatus           String    @default("trialing") // trialing | active | past_due | canceled
   trialEndsAt          DateTime?
+  /// Set for manually paid plans, which do not auto-renew. Past this date the
+  /// account falls back to Starter entitlements.
+  planPeriodEnd        DateTime?
   stripeCustomerId     String?
   stripeSubscriptionId String?
 
-  // Creator-owned gateway credentials (encrypted at rest).
-  stripeSecretKey      String?
-  bkashAppKey          String?
-  bkashAppSecret       String?
-  bkashUsername        String?
-  bkashPassword        String?
-  bkashSandbox         Boolean  @default(true)
+  products       Product[]
+  autoRules      AutoDMRule[]
+  orders         Order[]
+  funnelEvents   FunnelEvent[]
+  metaAccounts   MetaAccount[]
+  dmLogs         DmLog[]
+  bookings       Booking[]
+  uploads        Upload[]
+  socialAccounts SocialAccount[]
+  manualPayments ManualPayment[]
+  payouts        Payout[]
 
-  products             Product[]
-  autoRules            AutoDMRule[]
-  orders               Order[]
-  funnelEvents         FunnelEvent[]
-  metaAccounts         MetaAccount[]
-  dmLogs               DmLog[]
-  bookings             Booking[]
-  uploads              Upload[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
 
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+/// Links an external identity provider account to an OmniFlow user. Linking
+/// only ever happens from an authenticated session or a first-time signup, so
+/// a provider-asserted email can never take over an existing password account.
+model SocialAccount {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          String // "facebook"
+  providerAccountId String
+  email             String?
+  name              String?
+  createdAt         DateTime @default(now())
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+/// A buyer-declared offline payment awaiting super-admin verification.
+model ManualPayment {
+  id      String @id @default(cuid())
+  kind    String // "subscription" | "order"
+  gateway String @default("bKash")
+
+  userId  String?
+  user    User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan    String?
+  orderId String? @unique
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  /// Normalised to trimmed uppercase. Unique so one transaction can never be
+  /// claimed twice.
+  trxId        String @unique
+  senderNumber String
+  /// Always computed server-side from the plan or order, never accepted from
+  /// the submitter.
+  amountCents  Int
+  currency     String @default("BDT")
+
+  status     String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewedBy String?
+  reviewedAt DateTime?
+  reviewNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+}
+
+/// Record of money sent to a creator off-platform. Unused until creator-store
+/// selling ships; kept so enabling it needs no second migration.
+model Payout {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amountCents    Int
+  currency       String
+  note           String?
+  createdByEmail String?
+  createdAt      DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model Product {
-  id              String   @id @default(cuid())
-  userId          String
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title           String
-  type            String   // "digital_file" | "consultation"
-  price           Float
-  currency        String   @default("$")
-  badge           String?
-  description     String
-  thumbnail       String?
-  active          Boolean  @default(true)
+  id          String  @id @default(cuid())
+  userId      String
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  type        String // "digital_file" | "consultation"
+  price       Float
+  currency    String  @default("$")
+  badge       String?
+  description String
+  thumbnail   String?
+  active      Boolean @default(true)
 
   // digital_file
-  fileKey         String?
-  fileName        String?
-  fileSize        Int?
-  fileMime        String?
+  fileKey  String?
+  fileName String?
+  fileSize Int?
+  fileMime String?
 
   // consultation
   meetingLink     String?
   durationMinutes Int?
 
-  salesCount      Int      @default(0)
-  autoRules       AutoDMRule[]
-  orders          Order[]
-  slots           ConsultationSlot[]
-  bookings        Booking[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  salesCount Int                @default(0)
+  autoRules  AutoDMRule[]
+  orders     Order[]
+  slots      ConsultationSlot[]
+  bookings   Booking[]
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
 
   @@index([userId, createdAt])
 }
@@ -101,13 +204,13 @@ model Upload {
 }
 
 model ConsultationSlot {
-  id        String    @id @default(cuid())
+  id        String   @id @default(cuid())
   productId String
-  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   startsAt  DateTime
-  booked    Boolean   @default(false)
+  booked    Boolean  @default(false)
   booking   Booking?
-  createdAt DateTime  @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([productId, startsAt])
   @@index([productId, startsAt])
@@ -117,13 +220,16 @@ model MetaAccount {
   id             String       @id @default(cuid())
   userId         String
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  platform       String       // "facebook" | "instagram"
+  platform       String // "facebook" | "instagram"
   pageId         String       @unique
   pageName       String
   igUserId       String?      @unique
-  accessToken    String       // encrypted
+  accessToken    String // encrypted
   tokenExpiresAt DateTime?
   subscribed     Boolean      @default(false)
+  /// Set when the admin rotates the Meta app credentials: tokens issued by the
+  /// previous app are dead and the creator has to reconnect.
+  needsReconnect Boolean      @default(false)
   autoRules      AutoDMRule[]
   dmLogs         DmLog[]
   createdAt      DateTime     @default(now())
@@ -134,7 +240,7 @@ model AutoDMRule {
   id              String       @id @default(cuid())
   userId          String
   user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  platform        String       // "facebook" | "instagram"
+  platform        String // "facebook" | "instagram"
   keyword         String
   targetProductId String
   targetProduct   Product      @relation(fields: [targetProductId], references: [id], onDelete: Cascade)
@@ -162,7 +268,7 @@ model DmLog {
   platform      String
   commentId     String
   keyword       String
-  status        String       // "sent" | "failed" | "quota_exceeded" | "window_expired"
+  status        String // "sent" | "failed" | "quota_exceeded" | "window_expired"
   error         String?
   latencyMs     Int?
   createdAt     DateTime     @default(now())
@@ -172,30 +278,42 @@ model DmLog {
 }
 
 model Order {
-  id              String         @id @default(cuid())
-  userId          String
-  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  productId       String
-  product         Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
-  customerName    String
-  customerEmail   String
-  customerPhone   String?
-  amountCents     Int
-  currency        String         @default("USD")
-  pricePaid       String
-  gateway         String         // "Stripe" | "bKash" | "Free"
-  status          String         @default("PENDING") // PENDING | PAID | FAILED | REFUNDED
-  gatewayRef      String?        @unique
-  slotId          String?
-  deliveredAt     DateTime?
-  downloadToken   DownloadToken?
-  booking         Booking?
-  deliveryLogs    DeliveryLog[]
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId         String
+  product           Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customerName      String
+  customerEmail     String
+  customerPhone     String?
+  amountCents       Int
+  currency          String    @default("USD")
+  pricePaid         String
+  gateway           String // "Stripe" | "bKash" | "Free"
+  status            String    @default("PENDING") // PENDING | PAID | FAILED | REFUNDED
+  gatewayRef        String?   @unique
+  /// The payment identifier rather than the checkout session, for reconciliation.
+  gatewayPaymentRef String?
+  slotId            String?
+  deliveredAt       DateTime?
+
+  // Earnings columns for creator-store selling, which is not enabled yet. They
+  // stay zero until store payments ship, so enabling them needs no migration.
+  platformFeeCents Int       @default(0)
+  netCents         Int       @default(0)
+  payoutStatus     String    @default("UNPAID") // UNPAID | PAID
+  paidOutAt        DateTime?
+
+  downloadToken DownloadToken?
+  booking       Booking?
+  deliveryLogs  DeliveryLog[]
+  manualPayment ManualPayment?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
   @@index([userId, createdAt])
   @@index([userId, status])
+  @@index([userId, payoutStatus])
   @@index([productId])
 }
 
@@ -230,8 +348,8 @@ model DeliveryLog {
   id        String   @id @default(cuid())
   orderId   String
   order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  channel   String   // "email"
-  status    String   // "sent" | "failed" | "unconfigured"
+  channel   String // "email"
+  status    String // "sent" | "failed" | "unconfigured"
   detail    String?
   createdAt DateTime @default(now())
 
@@ -242,7 +360,7 @@ model FunnelEvent {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String   // "comment_detected" | "bio_visit" | "order_closed"
+  type      String // "comment_detected" | "bio_visit" | "order_closed"
   metadata  String?
   createdAt DateTime @default(now())
 
@@ -251,7 +369,7 @@ model FunnelEvent {
 
 model WebhookEvent {
   id        String   @id @default(cuid())
-  provider  String   // "meta" | "stripe" | "bkash"
+  provider  String // "meta" | "stripe" | "bkash"
   eventId   String
   createdAt DateTime @default(now())
 

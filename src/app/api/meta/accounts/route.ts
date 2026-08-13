@@ -16,6 +16,7 @@ export async function GET() {
       platform: true,
       igUserId: true,
       subscribed: true,
+      needsReconnect: true,
       tokenExpiresAt: true,
       createdAt: true,
     },

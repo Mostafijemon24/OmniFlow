@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAuth } from "next-auth/middleware";
 
-const ADMIN_PAGES = ["/dashboard/admin", "/dashboard/integrations"];
+const ADMIN_PAGES = ["/dashboard/admin"];
 const ADMIN_APIS = ["/api/admin"];
 
 /**

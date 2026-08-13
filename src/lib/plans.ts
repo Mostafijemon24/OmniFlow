@@ -6,15 +6,14 @@ export type Plan = {
   priceUsd: number;
   maxProducts: number;
   maxDmsPerMonth: number;
-  stripePriceEnv: string;
   tagline: string;
   /** Only capabilities that are actually implemented belong in this list. */
   features: string[];
 };
 
 const SHARED_FEATURES = [
-  "Bio store with Stripe & bKash checkout",
-  "Instant file delivery and consultation booking",
+  "Bio store with instant file delivery",
+  "Consultation booking with slot management",
   "Funnel analytics and orders CRM",
 ];
 
@@ -25,7 +24,6 @@ export const PLANS: Record<PlanId, Plan> = {
     priceUsd: 19,
     maxProducts: 3,
     maxDmsPerMonth: 500,
-    stripePriceEnv: "STRIPE_PRICE_STARTER",
     tagline: "For a first digital product.",
     features: ["Up to 3 products", "500 Auto-DMs per month", ...SHARED_FEATURES],
   },
@@ -33,26 +31,19 @@ export const PLANS: Record<PlanId, Plan> = {
     id: "pro",
     name: "Pro Growth",
     priceUsd: 49,
-    maxProducts: Number.POSITIVE_INFINITY,
-    maxDmsPerMonth: Number.POSITIVE_INFINITY,
-    stripePriceEnv: "STRIPE_PRICE_PRO",
+    maxProducts: 25,
+    maxDmsPerMonth: 5000,
     tagline: "For creators selling every day.",
-    features: ["Unlimited products", "Unlimited Auto-DMs", ...SHARED_FEATURES],
+    features: ["Up to 25 products", "5,000 Auto-DMs per month", ...SHARED_FEATURES],
   },
   agency: {
     id: "agency",
-    name: "Agency & Team",
+    name: "Agency Volume",
     priceUsd: 99,
-    maxProducts: Number.POSITIVE_INFINITY,
-    maxDmsPerMonth: Number.POSITIVE_INFINITY,
-    stripePriceEnv: "STRIPE_PRICE_AGENCY",
-    tagline: "A support tier for people running several creator accounts.",
-    features: [
-      "Unlimited products",
-      "Unlimited Auto-DMs",
-      ...SHARED_FEATURES,
-      "Same quotas as Pro Growth — one login per creator account",
-    ],
+    maxProducts: 100,
+    maxDmsPerMonth: 25000,
+    tagline: "For high-volume catalogues and comment traffic.",
+    features: ["Up to 100 products", "25,000 Auto-DMs per month", ...SHARED_FEATURES],
   },
 };
 
@@ -60,6 +51,38 @@ export const PLAN_LIST: Plan[] = [PLANS.starter, PLANS.pro, PLANS.agency];
 
 export function planOf(id: string | null | undefined) {
   return PLANS[(id as PlanId) || "starter"] ?? PLANS.starter;
+}
+
+export function isPlanId(value: unknown): value is PlanId {
+  return typeof value === "string" && value in PLANS;
+}
+
+/**
+ * Manually paid plans do not auto-renew, so entitlements have to be checked
+ * against the paid-up-to date rather than the stored plan name alone. Stripe
+ * subscriptions renew themselves and are governed by webhooks instead.
+ */
+export type PlanHolder = {
+  plan: string;
+  planPeriodEnd: Date | null;
+  stripeSubscriptionId: string | null;
+};
+
+export function planExpired(user: PlanHolder) {
+  if (user.stripeSubscriptionId) return false;
+  if (!user.planPeriodEnd) return false;
+  return user.planPeriodEnd.getTime() < Date.now();
+}
+
+/** The plan whose limits actually apply right now. */
+export function effectivePlanOf(user: PlanHolder) {
+  return planExpired(user) ? PLANS.starter : planOf(user.plan);
+}
+
+export function daysUntil(date: Date | null) {
+  if (!date) return null;
+  const ms = date.getTime() - Date.now();
+  return ms <= 0 ? 0 : Math.ceil(ms / 86400000);
 }
 
 /** UTC so the quota window does not shift with the host's timezone. */

@@ -1,18 +1,23 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
-import { platformStripe } from "@/lib/stripe";
+import { stripeForWebhooks } from "@/lib/stripe";
 import { fulfillOrder } from "@/lib/fulfillment";
 import { PLANS, PlanId } from "@/lib/plans";
 
 export const runtime = "nodejs";
 
-/** Platform webhook: OmniFlow subscription lifecycle + optional store fulfilment. */
+/** Platform webhook: OmniFlow subscription lifecycle + store fulfilment. */
 export async function POST(req: Request) {
-  const stripe = platformStripe();
+  // Signature verification is local HMAC, so it works before the admin has
+  // configured a Stripe API key. Only the signing secret is required.
+  const stripe = stripeForWebhooks();
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!stripe || !secret) {
-    return NextResponse.json({ error: "Stripe webhook is not configured." }, { status: 409 });
+  if (!secret) {
+    return NextResponse.json(
+      { error: "STRIPE_WEBHOOK_SECRET is not set on this deployment." },
+      { status: 409 }
+    );
   }
 
   const signature = req.headers.get("stripe-signature");
@@ -76,6 +81,9 @@ async function handle(event: Stripe.Event) {
             planStatus: "active",
             stripeCustomerId: String(session.customer ?? ""),
             stripeSubscriptionId: String(session.subscription),
+            // Stripe renews on its own, so the manual paid-up-to date no
+            // longer governs this account.
+            planPeriodEnd: null,
           },
         });
       }

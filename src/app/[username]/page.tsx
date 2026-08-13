@@ -4,6 +4,8 @@ import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { PublicStore } from "@/components/store/public-store";
+import { storeGateways } from "@/lib/platform-settings";
+import { currencyToCode } from "@/lib/utils";
 import { Product } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -69,6 +71,17 @@ export default async function PublicBioPage({ params }: { params: { username: st
     })),
   }));
 
+  // Gateway availability depends on the currency a product is priced in, so it
+  // is resolved once per distinct currency rather than once for the store.
+  const symbols = Array.from(new Set(products.map((p) => p.currency)));
+  const gateways: Record<string, { stripe: boolean; bkash: boolean }> = {};
+  await Promise.all(
+    symbols.map(async (symbol) => {
+      const { stripe, bkash } = await storeGateways(currencyToCode(symbol));
+      gateways[symbol] = { stripe, bkash };
+    })
+  );
+
   return (
     <Suspense>
       <PublicStore
@@ -85,12 +98,7 @@ export default async function PublicBioPage({ params }: { params: { username: st
           primaryGoal: user.primaryGoal,
         }}
         products={products}
-        gateways={{
-          stripe: Boolean(user.stripeSecretKey),
-          bkash: Boolean(
-            user.bkashAppKey && user.bkashAppSecret && user.bkashUsername && user.bkashPassword
-          ),
-        }}
+        gateways={gateways}
       />
     </Suspense>
   );

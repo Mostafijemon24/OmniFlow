@@ -117,7 +117,7 @@ export default function AutoDmPage() {
           <div className="glass-card rounded-2xl border border-amber-500/30 p-4 text-xs text-amber-300">
             <i className="fa-solid fa-triangle-exclamation mr-2" />
             No Meta page connected yet, so rules will not fire on real comments.{" "}
-            <Link href="/dashboard/integrations" className="font-bold underline">
+            <Link href="/dashboard/connections" className="font-bold underline">
               Connect Instagram / Facebook
             </Link>
           </div>

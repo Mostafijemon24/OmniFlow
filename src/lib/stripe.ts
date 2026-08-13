@@ -1,21 +1,29 @@
 import Stripe from "stripe";
-import { decrypt } from "./crypto";
+import { platformStripeSecretKey } from "./platform-settings";
 
 const API_VERSION = "2024-06-20";
 
-/** Platform-level Stripe account (used for OmniFlow subscription billing). */
-export function platformStripe() {
-  const key = process.env.STRIPE_SECRET_KEY;
+/**
+ * The platform Stripe account, configured by the super admin through the admin
+ * UI rather than the environment. Returns null when Stripe is switched off or
+ * unconfigured, which is the default state of a fresh install.
+ */
+export async function platformStripe() {
+  const key = await platformStripeSecretKey();
   if (!key) return null;
   return new Stripe(key, { apiVersion: API_VERSION });
 }
 
-/** Creator-owned Stripe account (used to charge their store customers). */
-export function creatorStripe(encryptedKey: string | null | undefined) {
-  if (!encryptedKey) return null;
-  try {
-    return new Stripe(decrypt(encryptedKey), { apiVersion: API_VERSION });
-  } catch {
-    return null;
-  }
+export function stripeClient(secretKey: string) {
+  return new Stripe(secretKey, { apiVersion: API_VERSION });
+}
+
+/**
+ * Signature verification is local HMAC and needs no valid API key, so the
+ * webhook must stay verifiable even before the admin has configured Stripe.
+ */
+export function stripeForWebhooks() {
+  return new Stripe("sk_unused_for_signature_verification_only", {
+    apiVersion: API_VERSION,
+  });
 }

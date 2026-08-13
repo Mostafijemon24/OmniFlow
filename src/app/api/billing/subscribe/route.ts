@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser, appUrl } from "@/lib/utils";
 import { platformStripe } from "@/lib/stripe";
+import { planGateways, stripePriceIdFor } from "@/lib/platform-settings";
 import { PLANS } from "@/lib/plans";
 
 const schema = z.object({ plan: z.enum(["starter", "pro", "agency"]) });
@@ -15,13 +16,27 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid plan." }, { status: 400 });
 
   const plan = PLANS[parsed.data.plan];
-  const stripe = platformStripe();
-  const priceId = process.env[plan.stripePriceEnv];
 
+  // Availability is re-checked here rather than trusted from the page, so
+  // hiding the button is never what enforces a switched-off gateway.
+  const gateways = await planGateways(plan.id);
+  if (!gateways.stripe) {
+    return NextResponse.json(
+      {
+        error: "Card payments are not available right now. Please try again later.",
+        code: "gateway_unavailable",
+      },
+      { status: 409 }
+    );
+  }
+
+  const stripe = await platformStripe();
+  const priceId = await stripePriceIdFor(plan.id);
   if (!stripe || !priceId) {
     return NextResponse.json(
       {
-        error: `Billing is not configured. Set STRIPE_SECRET_KEY and ${plan.stripePriceEnv} to enable ${plan.name} subscriptions.`,
+        error: "Card payments are not available right now. Please try again later.",
+        code: "gateway_unavailable",
       },
       { status: 409 }
     );
@@ -43,7 +58,11 @@ export async function POST(req: Request) {
         });
         await prisma.user.update({
           where: { id: user.id },
-          data: { plan: plan.id, planStatus: updated.status === "active" ? "active" : updated.status },
+          data: {
+            plan: plan.id,
+            planStatus: updated.status === "active" ? "active" : updated.status,
+            planPeriodEnd: null,
+          },
         });
         return NextResponse.json({ switched: true, plan: plan.id });
       }
@@ -52,29 +71,39 @@ export async function POST(req: Request) {
     }
   }
 
-  let customerId = user.stripeCustomerId;
-  if (!customerId) {
-    const customer = await stripe.customers.create({
-      email: user.email,
-      name: user.fullName,
-      metadata: { userId: user.id },
+  try {
+    let customerId = user.stripeCustomerId;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: user.email,
+        name: user.fullName,
+        metadata: { userId: user.id },
+      });
+      customerId = customer.id;
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { stripeCustomerId: customerId },
+      });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      customer: customerId,
+      line_items: [{ price: priceId, quantity: 1 }],
+      metadata: { userId: user.id, plan: plan.id },
+      subscription_data: { metadata: { userId: user.id, plan: plan.id } },
+      success_url: `${appUrl()}/dashboard/billing?upgraded=${plan.id}`,
+      cancel_url: `${appUrl()}/dashboard/checkout?plan=${plan.id}&canceled=1`,
     });
-    customerId = customer.id;
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { stripeCustomerId: customerId },
-    });
+
+    return NextResponse.json({ url: session.url });
+  } catch (error) {
+    // A misconfigured price ID or a revoked key must not surface as a stack
+    // trace to the creator.
+    console.error("stripe checkout session", error);
+    return NextResponse.json(
+      { error: "Stripe could not start this checkout. The platform admin has been notified." },
+      { status: 502 }
+    );
   }
-
-  const session = await stripe.checkout.sessions.create({
-    mode: "subscription",
-    customer: customerId,
-    line_items: [{ price: priceId, quantity: 1 }],
-    metadata: { userId: user.id, plan: plan.id },
-    subscription_data: { metadata: { userId: user.id, plan: plan.id } },
-    success_url: `${appUrl()}/dashboard/billing?upgraded=${plan.id}`,
-    cancel_url: `${appUrl()}/dashboard/billing?canceled=1`,
-  });
-
-  return NextResponse.json({ url: session.url });
 }

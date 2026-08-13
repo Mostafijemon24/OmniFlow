@@ -6,7 +6,7 @@ import { encrypt, safeEqual } from "@/lib/crypto";
 import { exchangeCodeForToken, fetchPages, longLivedToken } from "@/lib/meta";
 
 export async function GET(req: NextRequest) {
-  const settings = `${appUrl()}/dashboard/integrations`;
+  const settings = `${appUrl()}/dashboard/connections`;
   const user = await getCurrentUser();
   if (!user) return NextResponse.redirect(`${appUrl()}/?error=signin_required`);
 

@@ -20,8 +20,10 @@ const nav: NavItem[] = [
   { href: "/dashboard/auto-dm", label: "Comment Auto-DM", icon: "fa-robot" },
   { href: "/dashboard/orders", label: "Orders & CRM", icon: "fa-receipt", counter: "orders" },
   { href: "/dashboard/analytics", label: "Funnel Analytics", icon: "fa-chart-pie" },
-  { href: "/dashboard/integrations", label: "Integrations", icon: "fa-plug", adminOnly: true },
-  { href: "/dashboard/billing", label: "Plan & Billing", icon: "fa-credit-card" },
+  { href: "/dashboard/connections", label: "Connections", icon: "fa-plug", counter: "meta" },
+  { href: "/dashboard/plans", label: "Plans", icon: "fa-rocket" },
+  { href: "/dashboard/billing", label: "Billing", icon: "fa-credit-card" },
+  { href: "/dashboard/admin", label: "Platform Setup", icon: "fa-shield-halved", adminOnly: true },
 ];
 
 export function DashboardSidebar() {
