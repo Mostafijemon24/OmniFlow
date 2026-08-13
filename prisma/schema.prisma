@@ -1,0 +1,234 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// SQLite by default so the platform runs without external services.
+// For production set provider = "postgresql" and point DATABASE_URL at your cluster.
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String   @id @default(cuid())
+  email                String   @unique
+  passwordHash         String
+  fullName             String
+  username             String   @unique
+  headline             String?
+  bio                  String?
+  avatar               String?
+  cover                String?
+  category             String?
+  primaryGoal          String?
+  onboardingCompleted  Boolean  @default(false)
+
+  plan                 String   @default("starter")
+  planStatus           String   @default("trialing") // trialing | active | past_due | canceled
+  trialEndsAt          DateTime?
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+
+  // Creator-owned gateway credentials (encrypted at rest).
+  stripeSecretKey      String?
+  bkashAppKey          String?
+  bkashAppSecret       String?
+  bkashUsername        String?
+  bkashPassword        String?
+  bkashSandbox         Boolean  @default(true)
+
+  products             Product[]
+  autoRules            AutoDMRule[]
+  orders               Order[]
+  funnelEvents         FunnelEvent[]
+  metaAccounts         MetaAccount[]
+  dmLogs               DmLog[]
+  bookings             Booking[]
+
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model Product {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title           String
+  type            String   // "digital_file" | "consultation"
+  price           Float
+  currency        String   @default("$")
+  badge           String?
+  description     String
+  thumbnail       String?
+  active          Boolean  @default(true)
+
+  // digital_file
+  fileKey         String?
+  fileName        String?
+  fileSize        Int?
+  fileMime        String?
+
+  // consultation
+  meetingLink     String?
+  durationMinutes Int?
+
+  salesCount      Int      @default(0)
+  autoRules       AutoDMRule[]
+  orders          Order[]
+  slots           ConsultationSlot[]
+  bookings        Booking[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model ConsultationSlot {
+  id        String    @id @default(cuid())
+  productId String
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  startsAt  DateTime
+  booked    Boolean   @default(false)
+  booking   Booking?
+  createdAt DateTime  @default(now())
+
+  @@index([productId, startsAt])
+}
+
+model MetaAccount {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform       String       // "facebook" | "instagram"
+  pageId         String       @unique
+  pageName       String
+  igUserId       String?      @unique
+  accessToken    String       // encrypted
+  tokenExpiresAt DateTime?
+  subscribed     Boolean      @default(false)
+  autoRules      AutoDMRule[]
+  dmLogs         DmLog[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model AutoDMRule {
+  id              String       @id @default(cuid())
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform        String       // "facebook" | "instagram"
+  keyword         String
+  targetProductId String
+  targetProduct   Product      @relation(fields: [targetProductId], references: [id], onDelete: Cascade)
+  metaAccountId   String?
+  metaAccount     MetaAccount? @relation(fields: [metaAccountId], references: [id], onDelete: SetNull)
+  autoMessage     String
+  triggerCount    Int          @default(0)
+  active          Boolean      @default(true)
+  dmLogs          DmLog[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([userId, keyword])
+}
+
+model DmLog {
+  id            String       @id @default(cuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ruleId        String?
+  rule          AutoDMRule?  @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  metaAccountId String?
+  metaAccount   MetaAccount? @relation(fields: [metaAccountId], references: [id], onDelete: SetNull)
+  platform      String
+  commentId     String
+  keyword       String
+  status        String       // "sent" | "failed" | "quota_exceeded" | "window_expired"
+  error         String?
+  latencyMs     Int?
+  createdAt     DateTime     @default(now())
+
+  @@index([userId, createdAt])
+  @@index([commentId])
+}
+
+model Order {
+  id              String         @id @default(cuid())
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customerName    String
+  customerEmail   String
+  customerPhone   String?
+  amountCents     Int
+  currency        String         @default("USD")
+  pricePaid       String
+  gateway         String         // "Stripe" | "bKash" | "Free"
+  status          String         @default("PENDING") // PENDING | PAID | FAILED | REFUNDED
+  gatewayRef      String?        @unique
+  slotId          String?
+  deliveredAt     DateTime?
+  downloadToken   DownloadToken?
+  booking         Booking?
+  deliveryLogs    DeliveryLog[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+model DownloadToken {
+  id            String   @id @default(cuid())
+  token         String   @unique
+  orderId       String   @unique
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  expiresAt     DateTime
+  maxDownloads  Int      @default(5)
+  downloadCount Int      @default(0)
+  createdAt     DateTime @default(now())
+}
+
+model Booking {
+  id          String            @id @default(cuid())
+  orderId     String            @unique
+  order       Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  slotId      String?           @unique
+  slot        ConsultationSlot? @relation(fields: [slotId], references: [id], onDelete: SetNull)
+  startsAt    DateTime
+  meetingLink String?
+  status      String            @default("CONFIRMED")
+  createdAt   DateTime          @default(now())
+}
+
+model DeliveryLog {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  channel   String   // "email"
+  status    String   // "sent" | "failed" | "unconfigured"
+  detail    String?
+  createdAt DateTime @default(now())
+}
+
+model FunnelEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // "comment_detected" | "bio_visit" | "order_closed"
+  metadata  String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, type, createdAt])
+}
+
+model WebhookEvent {
+  id        String   @id @default(cuid())
+  provider  String   // "meta" | "stripe" | "bkash"
+  eventId   String
+  createdAt DateTime @default(now())
+
+  @@unique([provider, eventId])
+}
