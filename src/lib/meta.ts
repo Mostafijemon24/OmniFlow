@@ -3,11 +3,14 @@ import { prisma } from "./prisma";
 import { decrypt } from "./crypto";
 import { appUrl, storeUrl } from "./utils";
 import { effectivePlanOf, monthStart } from "./plans";
+import { MetaConnector } from "./platform-settings";
 
-export const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v21.0";
-export const GRAPH_API = `https://graph.facebook.com/${GRAPH_VERSION}`;
-
-export const META_SCOPES = [
+/**
+ * Every call takes the connector explicitly rather than reading the platform
+ * settings itself, so one request performs one settings read and a caller
+ * cannot accidentally act with a stale app id.
+ */
+export const PAGE_SCOPES = [
   "pages_show_list",
   "pages_manage_metadata",
   "pages_messaging",
@@ -18,33 +21,49 @@ export const META_SCOPES = [
   "instagram_manage_messages",
 ].join(",");
 
-export function isMetaConfigured() {
-  return Boolean(process.env.META_APP_ID && process.env.META_APP_SECRET);
-}
+/** Signing in only needs an identity, never page access. */
+export const LOGIN_SCOPES = "public_profile,email";
 
 export function metaRedirectUri() {
   return `${appUrl()}/api/meta/oauth/callback`;
 }
 
-export function metaAuthUrl(state: string) {
+export function oauthDialogUrl(
+  connector: MetaConnector,
+  args: { state: string; redirectUri: string; scope: string }
+) {
   const params = new URLSearchParams({
-    client_id: process.env.META_APP_ID!,
-    redirect_uri: metaRedirectUri(),
-    state,
-    scope: META_SCOPES,
+    client_id: connector.appId,
+    redirect_uri: args.redirectUri,
+    state: args.state,
+    scope: args.scope,
     response_type: "code",
   });
-  return `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth?${params}`;
+  return `https://www.facebook.com/${connector.graphVersion}/dialog/oauth?${params}`;
 }
 
-export async function exchangeCodeForToken(code: string) {
+export function metaAuthUrl(connector: MetaConnector, state: string) {
+  return oauthDialogUrl(connector, {
+    state,
+    redirectUri: metaRedirectUri(),
+    scope: PAGE_SCOPES,
+  });
+}
+
+export async function exchangeCodeForToken(
+  connector: MetaConnector,
+  code: string,
+  redirectUri = metaRedirectUri()
+) {
   const params = new URLSearchParams({
-    client_id: process.env.META_APP_ID!,
-    client_secret: process.env.META_APP_SECRET!,
-    redirect_uri: metaRedirectUri(),
+    client_id: connector.appId,
+    client_secret: connector.appSecret,
+    redirect_uri: redirectUri,
     code,
   });
-  const res = await fetch(`${GRAPH_API}/oauth/access_token?${params}`, { cache: "no-store" });
+  const res = await fetch(`${connector.graphApi}/oauth/access_token?${params}`, {
+    cache: "no-store",
+  });
   const data = await res.json();
   if (!res.ok || !data.access_token) {
     throw new Error(data.error?.message || "Meta token exchange failed.");
@@ -52,14 +71,28 @@ export async function exchangeCodeForToken(code: string) {
   return data.access_token as string;
 }
 
-export async function longLivedToken(shortToken: string) {
+export async function fetchMetaProfile(connector: MetaConnector, userToken: string) {
+  const res = await fetch(
+    `${connector.graphApi}/me?fields=id,name,email&access_token=${encodeURIComponent(userToken)}`,
+    { cache: "no-store" }
+  );
+  const data = await res.json();
+  if (!res.ok || !data.id) {
+    throw new Error(data.error?.message || "Could not read the Facebook profile.");
+  }
+  return data as { id: string; name?: string; email?: string };
+}
+
+export async function longLivedToken(connector: MetaConnector, shortToken: string) {
   const params = new URLSearchParams({
     grant_type: "fb_exchange_token",
-    client_id: process.env.META_APP_ID!,
-    client_secret: process.env.META_APP_SECRET!,
+    client_id: connector.appId,
+    client_secret: connector.appSecret,
     fb_exchange_token: shortToken,
   });
-  const res = await fetch(`${GRAPH_API}/oauth/access_token?${params}`, { cache: "no-store" });
+  const res = await fetch(`${connector.graphApi}/oauth/access_token?${params}`, {
+    cache: "no-store",
+  });
   const data = await res.json();
   if (!res.ok || !data.access_token) {
     throw new Error(data.error?.message || "Meta long-lived token exchange failed.");
@@ -77,9 +110,12 @@ export type MetaPage = {
   instagram_business_account?: { id: string };
 };
 
-export async function fetchPages(userToken: string): Promise<MetaPage[]> {
+export async function fetchPages(
+  connector: MetaConnector,
+  userToken: string
+): Promise<MetaPage[]> {
   const res = await fetch(
-    `${GRAPH_API}/me/accounts?fields=id,name,access_token,instagram_business_account{id}&access_token=${userToken}`,
+    `${connector.graphApi}/me/accounts?fields=id,name,access_token,instagram_business_account{id}&access_token=${encodeURIComponent(userToken)}`,
     { cache: "no-store" }
   );
   const data = await res.json();
@@ -87,8 +123,12 @@ export async function fetchPages(userToken: string): Promise<MetaPage[]> {
   return (data.data || []) as MetaPage[];
 }
 
-export async function subscribePage(pageId: string, pageToken: string) {
-  const res = await fetch(`${GRAPH_API}/${pageId}/subscribed_apps`, {
+export async function subscribePage(
+  connector: MetaConnector,
+  pageId: string,
+  pageToken: string
+) {
+  const res = await fetch(`${connector.graphApi}/${pageId}/subscribed_apps`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -104,9 +144,13 @@ export async function subscribePage(pageId: string, pageToken: string) {
   return true;
 }
 
-export async function unsubscribePage(pageId: string, pageToken: string) {
+export async function unsubscribePage(
+  connector: MetaConnector,
+  pageId: string,
+  pageToken: string
+) {
   const res = await fetch(
-    `${GRAPH_API}/${pageId}/subscribed_apps?access_token=${encodeURIComponent(pageToken)}`,
+    `${connector.graphApi}/${pageId}/subscribed_apps?access_token=${encodeURIComponent(pageToken)}`,
     { method: "DELETE", cache: "no-store" }
   );
   const data = await res.json();
@@ -116,12 +160,16 @@ export async function unsubscribePage(pageId: string, pageToken: string) {
   return true;
 }
 
-export function verifyMetaSignature(rawBody: string, signature: string | null) {
-  const secret = process.env.META_APP_SECRET;
-  if (!secret) return false;
+/** Fails closed: an unconfigured connector rejects every delivery. */
+export function verifyMetaSignature(
+  connector: MetaConnector | null,
+  rawBody: string,
+  signature: string | null
+) {
+  if (!connector) return false;
   if (!signature) return false;
   const expected =
-    "sha256=" + crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+    "sha256=" + crypto.createHmac("sha256", connector.appSecret).update(rawBody).digest("hex");
   const a = Buffer.from(expected);
   const b = Buffer.from(signature);
   if (a.length !== b.length) return false;
@@ -222,8 +270,13 @@ export function resolveRule<T extends { keyword: string }>(comment: string, rule
   );
 }
 
-async function sendPrivateReply(commentId: string, pageToken: string, message: string) {
-  const res = await fetch(`${GRAPH_API}/${commentId}/private_replies`, {
+async function sendPrivateReply(
+  connector: MetaConnector,
+  commentId: string,
+  pageToken: string,
+  message: string
+) {
+  const res = await fetch(`${connector.graphApi}/${commentId}/private_replies`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, access_token: pageToken }),
@@ -236,7 +289,7 @@ async function sendPrivateReply(commentId: string, pageToken: string, message: s
   return data;
 }
 
-export async function processComment(comment: IncomingComment) {
+export async function processComment(connector: MetaConnector, comment: IncomingComment) {
   const account = await prisma.metaAccount.findFirst({
     where:
       comment.platform === "instagram"
@@ -245,6 +298,10 @@ export async function processComment(comment: IncomingComment) {
     include: { user: true },
   });
   if (!account) return { status: "no_account" as const };
+
+  // The stored token was issued by a Meta app that is no longer configured, so
+  // there is nothing to send with.
+  if (account.needsReconnect) return { status: "needs_reconnect" as const };
 
   // Never reply to the page's own comments, which would loop.
   if (
@@ -325,7 +382,7 @@ export async function processComment(comment: IncomingComment) {
   const message = `${matched.autoMessage}\n${link}`;
 
   try {
-    await sendPrivateReply(comment.commentId, decrypt(account.accessToken), message);
+    await sendPrivateReply(connector, comment.commentId, decrypt(account.accessToken), message);
 
     await prisma.$transaction([
       prisma.autoDMRule.update({

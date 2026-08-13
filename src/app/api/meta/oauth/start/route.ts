@@ -1,16 +1,22 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getCurrentUser } from "@/lib/utils";
-import { isMetaConfigured, metaAuthUrl } from "@/lib/meta";
+import { metaConnector } from "@/lib/platform-settings";
+import { metaAuthUrl } from "@/lib/meta";
 import { randomToken } from "@/lib/crypto";
 
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (!isMetaConfigured()) {
+  const connector = await metaConnector();
+  if (!connector) {
     return NextResponse.json(
-      { error: "META_APP_ID and META_APP_SECRET must be set to connect Meta." },
+      {
+        error:
+          "Instagram and Facebook are not available yet. The platform administrator has not set up the Meta connector.",
+        code: "connector_unavailable",
+      },
       { status: 409 }
     );
   }
@@ -24,5 +30,5 @@ export async function GET() {
     path: "/",
   });
 
-  return NextResponse.redirect(metaAuthUrl(state));
+  return NextResponse.redirect(metaAuthUrl(connector, state));
 }

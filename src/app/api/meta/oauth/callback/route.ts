@@ -3,12 +3,22 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser, appUrl } from "@/lib/utils";
 import { encrypt, safeEqual } from "@/lib/crypto";
+import { metaConnector } from "@/lib/platform-settings";
 import { exchangeCodeForToken, fetchPages, longLivedToken } from "@/lib/meta";
 
 export async function GET(req: NextRequest) {
   const settings = `${appUrl()}/dashboard/connections`;
   const user = await getCurrentUser();
   if (!user) return NextResponse.redirect(`${appUrl()}/?error=signin_required`);
+
+  const connector = await metaConnector();
+  if (!connector) {
+    return NextResponse.redirect(
+      `${settings}?meta_error=${encodeURIComponent(
+        "The Meta connector is no longer configured. Please try again later."
+      )}`
+    );
+  }
 
   const error = req.nextUrl.searchParams.get("error_description");
   if (error) return NextResponse.redirect(`${settings}?meta_error=${encodeURIComponent(error)}`);
@@ -23,9 +33,9 @@ export async function GET(req: NextRequest) {
   cookies().delete("meta_oauth_state");
 
   try {
-    const shortToken = await exchangeCodeForToken(code);
-    const { token, expiresIn } = await longLivedToken(shortToken);
-    const pages = await fetchPages(token);
+    const shortToken = await exchangeCodeForToken(connector, code);
+    const { token, expiresIn } = await longLivedToken(connector, shortToken);
+    const pages = await fetchPages(connector, token);
 
     if (!pages.length) {
       return NextResponse.redirect(`${settings}?meta_error=No+pages+found+on+this+account`);
@@ -52,6 +62,8 @@ export async function GET(req: NextRequest) {
         platform: igId ? "instagram" : "facebook",
         accessToken: encrypt(page.access_token),
         tokenExpiresAt: expiresAt,
+        // A fresh token from the current app clears the reconnect flag.
+        needsReconnect: false,
       };
 
       if (existing) {

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/utils";
-import { isMetaConfigured } from "@/lib/meta";
+import { metaConnector } from "@/lib/platform-settings";
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -23,5 +23,5 @@ export async function GET() {
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({ configured: isMetaConfigured(), accounts });
+  return NextResponse.json({ configured: Boolean(await metaConnector()), accounts });
 }
