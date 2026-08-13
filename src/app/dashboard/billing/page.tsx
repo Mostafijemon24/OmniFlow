@@ -1,22 +1,31 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Profile } from "@/lib/types";
-import { PLAN_LIST } from "@/lib/plans";
+import { ManualPayment, Profile } from "@/lib/types";
 import { useUi } from "@/components/providers/ui-provider";
+
+const STATUS_STYLE: Record<string, string> = {
+  PENDING: "bg-amber-500/20 text-amber-400",
+  APPROVED: "bg-emerald-500/20 text-emerald-400",
+  REJECTED: "bg-red-500/20 text-red-400",
+};
 
 export default function BillingPage() {
   const { triggerToast } = useUi();
   const params = useSearchParams();
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [payments, setPayments] = useState<ManualPayment[]>([]);
 
-  const load = useCallback(() => {
-    fetch("/api/profile")
-      .then((r) => r.json())
-      .then((data) => (data.error ? null : setProfile(data)))
-      .catch(() => undefined);
+  const load = useCallback(async () => {
+    const [profileRes, paymentsRes] = await Promise.all([
+      fetch("/api/profile"),
+      fetch("/api/payments/manual"),
+    ]);
+    const profileData = await profileRes.json();
+    if (!profileData.error) setProfile(profileData);
+    if (paymentsRes.ok) setPayments((await paymentsRes.json()).payments ?? []);
   }, []);
 
   useEffect(() => {
@@ -24,38 +33,21 @@ export default function BillingPage() {
     if (params.get("upgraded")) triggerToast("Subscription active. Thanks for upgrading!");
   }, [load, params, triggerToast]);
 
-  async function subscribe(plan: string) {
-    setBusy(plan);
-    try {
-      const res = await fetch("/api/billing/subscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        triggerToast(data.error || "Could not start the upgrade.");
-        return;
-      }
-      if (data.url) {
-        window.location.href = data.url;
-        return;
-      }
-      triggerToast("Your subscription was switched.");
-      load();
-    } catch {
-      triggerToast("Could not reach the billing service.");
-    } finally {
-      setBusy(null);
-    }
-  }
+  const pending = payments.filter((p) => p.status === "PENDING").length;
 
   return (
     <div className="space-y-6">
       <div className="glass-card rounded-2xl border border-slate-800 p-5">
-        <h3 className="border-b border-slate-800 pb-2.5 text-xs font-bold uppercase tracking-wider text-white">
-          Current plan
-        </h3>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-2.5">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-white">Current plan</h3>
+          <Link
+            href="/dashboard/plans"
+            className="rounded-xl bg-brand-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-brand-500"
+          >
+            Change plan
+          </Link>
+        </div>
+
         <div className="flex flex-wrap items-center gap-6 pt-4 text-xs">
           <div>
             <span className="block text-[10px] font-bold uppercase text-slate-500">Plan</span>
@@ -66,7 +58,9 @@ export default function BillingPage() {
             <span className="text-lg font-black text-brand-400">{profile?.planStatus || "—"}</span>
           </div>
           <div>
-            <span className="block text-[10px] font-bold uppercase text-slate-500">Products used</span>
+            <span className="block text-[10px] font-bold uppercase text-slate-500">
+              Products used
+            </span>
             <span className="text-lg font-black text-emerald-400">
               {profile?.productCount ?? 0}
               {profile?.maxProducts ? ` / ${profile.maxProducts}` : ""}
@@ -81,56 +75,74 @@ export default function BillingPage() {
             </div>
           )}
         </div>
+
+        {profile?.planNotice && (
+          <p
+            className={`mt-4 rounded-xl border p-3 text-[11px] font-semibold ${
+              profile.planNotice.level === "expired"
+                ? "border-red-500/30 bg-red-500/5 text-red-300"
+                : profile.planNotice.level === "expiring"
+                  ? "border-amber-500/30 bg-amber-500/5 text-amber-300"
+                  : "border-slate-800 bg-dark-900 text-slate-400"
+            }`}
+          >
+            {profile.planNotice.message}
+          </p>
+        )}
+
+        {profile?.effectivePlanName &&
+          profile.effectivePlanName !== profile.planName && (
+            <p className="mt-2 text-[11px] text-slate-400">
+              Limits currently applied: <b className="text-white">{profile.effectivePlanName}</b>.
+            </p>
+          )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        {PLAN_LIST.map((plan) => {
-          const current = profile?.plan === plan.id;
-          const highlighted = plan.id === "pro";
+      <div className="glass-card rounded-2xl border border-slate-800 p-5">
+        <h3 className="border-b border-slate-800 pb-2.5 text-xs font-bold uppercase tracking-wider text-white">
+          bKash payments
+          {pending > 0 && (
+            <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] text-amber-300">
+              {pending} awaiting review
+            </span>
+          )}
+        </h3>
 
-          return (
-            <div
-              key={plan.id}
-              className={`glass-card flex flex-col justify-between space-y-4 rounded-2xl p-5 ${
-                highlighted ? "border-2 border-brand-500" : "border border-slate-800"
-              }`}
-            >
-              <div className="space-y-3">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  {plan.name}
-                </span>
-                <div className="text-2xl font-black text-white">
-                  ${plan.priceUsd}{" "}
-                  <span className="text-xs font-normal text-slate-400">/month</span>
-                </div>
-                <p className="text-[11px] text-slate-400">{plan.tagline}</p>
-                <ul className="space-y-1.5 text-xs text-slate-300">
-                  {plan.features.map((feature) => (
-                    <li key={feature}>
-                      <i className="fa-solid fa-check mr-2 text-emerald-400" />
-                      {feature}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <button
-                onClick={() => subscribe(plan.id)}
-                disabled={busy !== null || current}
-                className={`w-full rounded-xl py-2.5 text-xs font-bold transition disabled:opacity-50 ${
-                  highlighted
-                    ? "bg-brand-600 text-white hover:bg-brand-500"
-                    : "border border-slate-800 bg-dark-900 text-white hover:bg-dark-800"
-                }`}
+        {payments.length === 0 ? (
+          <p className="pt-4 text-xs text-slate-400">
+            You have not submitted any bKash payments.
+          </p>
+        ) : (
+          <div className="space-y-2 pt-4">
+            {payments.map((payment) => (
+              <div
+                key={payment.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-dark-900 p-3"
               >
-                {current
-                  ? "Current plan"
-                  : busy === plan.id
-                    ? "Redirecting..."
-                    : `Switch to ${plan.name}`}
-              </button>
-            </div>
-          );
-        })}
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-white">
+                    {payment.plan} · {payment.currency}{" "}
+                    {(payment.amountCents / 100).toFixed(2)}
+                  </p>
+                  <p className="font-mono text-[10px] text-slate-500">TrxID {payment.trxId}</p>
+                  <p className="text-[10px] text-slate-500">
+                    {new Date(payment.createdAt).toLocaleString()}
+                  </p>
+                  {payment.reviewNote && (
+                    <p className="mt-1 text-[11px] text-slate-400">{payment.reviewNote}</p>
+                  )}
+                </div>
+                <span
+                  className={`rounded px-2 py-0.5 text-[10px] font-bold ${
+                    STATUS_STYLE[payment.status] ?? "bg-slate-700 text-slate-300"
+                  }`}
+                >
+                  {payment.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
