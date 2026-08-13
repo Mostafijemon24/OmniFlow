@@ -8,6 +8,12 @@ TMP="$(mktemp -d)"
 PASS="SuperSecret123"
 FAILED=0
 
+# Must match SUPER_ADMIN_EMAIL on the instance under test, otherwise the admin
+# probes cannot run. The probe enables the platform gateways, exercises them,
+# and switches them off again, so point it at a development instance.
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@omniflow.test}"
+VERIFY_TOKEN="omniflow-meta-verify"
+
 reg() { # $1 = label -> prints "username jar"
   local email="probe-$1-$(date +%s%N)@omniflow.test"
   local jar="$TMP/$1.jar"
@@ -28,10 +34,40 @@ check() { # $1 label, $2 expected substring, $3 actual
   else printf "  FAIL %s\n     expected /%s/ got: %s\n" "$1" "$2" "$3"; FAILED=$((FAILED + 1)); fi
 }
 
+login() { # $1 = email, $2 = jar
+  local csrf
+  csrf=$(curl -s -c "$2" "$BASE/api/auth/csrf" | sed -n 's/.*"csrfToken":"\([^"]*\)".*/\1/p')
+  curl -s -b "$2" -c "$2" -X POST "$BASE/api/auth/callback/credentials" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode "csrfToken=$csrf" --data-urlencode "email=$1" \
+    --data-urlencode "password=$PASS" --data-urlencode "json=true" > /dev/null
+}
+
+settings() { # $1 = json body -> PUT /api/admin/settings as the admin
+  curl -s -b "$ADMIN" -X PUT "$BASE/api/admin/settings" \
+    -H 'Content-Type: application/json' -d "$1"
+}
+
 echo "== setup two creators =="
 A_USER=$(reg a); A="$TMP/a.jar"
 B_USER=$(reg b); B="$TMP/b.jar"
 echo "  A=$A_USER B=$B_USER"
+
+echo "== setup super admin =="
+ADMIN="$TMP/admin.jar"
+curl -s -X POST "$BASE/api/register" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"Platform Admin\",\"email\":\"$ADMIN_EMAIL\",\"password\":\"$PASS\"}" > /dev/null
+login "$ADMIN_EMAIL" "$ADMIN"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$ADMIN" "$BASE/api/admin/settings")
+if [ "$CODE" != "200" ]; then
+  echo "  FAIL admin session cannot reach /api/admin/settings (got $CODE)"
+  echo "       set SUPER_ADMIN_EMAIL=$ADMIN_EMAIL in .env and restart the server"
+  FAILED=$((FAILED + 1))
+fi
+
+# The Meta connector lives in the database now, so the webhook probes below
+# need it configured before they mean anything.
+settings "{\"metaEnabled\":true,\"metaAppId\":\"probe-app-id\",\"metaAppSecret\":\"probe-app-secret\",\"metaVerifyToken\":\"$VERIFY_TOKEN\"}" > /dev/null
 
 echo "secret-a" > "$TMP/a.txt"
 A_KEY=$(curl -s -b "$A" -X POST "$BASE/api/upload" -F "file=@$TMP/a.txt" -F "scope=product" \
@@ -114,7 +150,7 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$B" -X PATCH "$BASE/api/produc
 check "B cannot patch A's product" "^404" "$CODE"
 
 echo "== 10. unauthenticated access =="
-for P in /api/profile /api/products /api/orders /api/analytics /api/auto-dm /api/meta/accounts /api/settings/payments; do
+for P in /api/profile /api/products /api/orders /api/analytics /api/auto-dm /api/meta/accounts /api/account/social /api/payments/manual /api/billing/options; do
   CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE$P")
   check "$P requires a session" "^401" "$CODE"
 done
@@ -131,7 +167,7 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/webhooks/meta" 
 check "bad signature rejected" "^401" "$CODE"
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/webhooks/meta?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=x")
 check "wrong verify token rejected" "^403" "$CODE"
-OUT=$(curl -s "$BASE/api/webhooks/meta?hub.mode=subscribe&hub.verify_token=omniflow-meta-verify&hub.challenge=probe-challenge")
+OUT=$(curl -s "$BASE/api/webhooks/meta?hub.mode=subscribe&hub.verify_token=$VERIFY_TOKEN&hub.challenge=probe-challenge")
 check "correct verify token echoes challenge" "probe-challenge" "$OUT"
 
 echo "== 13. paid product without gateway =="
@@ -140,7 +176,7 @@ PAID=$(curl -s -b "$A" -X POST "$BASE/api/products" -H 'Content-Type: applicatio
   | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
 OUT=$(curl -s -X POST "$BASE/api/checkout" -H 'Content-Type: application/json' \
   -d "{\"productId\":\"$PAID\",\"customerName\":\"Probe Buyer\",\"customerEmail\":\"buyer@example.com\",\"gateway\":\"Stripe\"}")
-check "paid checkout blocked without gateway" "not connected Stripe" "$OUT"
+check "paid checkout blocked without gateway" "gateway_unavailable" "$OUT"
 ORDERS=$(curl -s -b "$A" "$BASE/api/orders?status=FAILED")
 check "blocked checkout left no FAILED order" '"orders":\[\]' "$ORDERS"
 
@@ -167,6 +203,75 @@ check "owner preview does not count as a visit" "^$BEFORE$" "$AFTER"
 curl -s "$BASE/$A_USER" > /dev/null
 AFTER2=$(curl -s -b "$A" "$BASE/api/analytics?days=30" | sed -n 's/.*"bioVisits":\([0-9]*\).*/\1/p')
 check "anonymous visit does count" "^$((BEFORE + 1))$" "$AFTER2"
+
+echo "== 17. the admin surface is invisible to non-admins =="
+for P in /api/admin/settings /api/admin/payments /api/admin/payments/anything; do
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$A" "$BASE$P")
+  check "GET $P is 404 for a creator" "^404" "$CODE"
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE$P")
+  check "GET $P is 404 anonymously" "^404" "$CODE"
+done
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$A" -X PUT "$BASE/api/admin/settings" \
+  -H 'Content-Type: application/json' -d '{"stripeEnabled":true}')
+check "a creator cannot write platform settings" "^404" "$CODE"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$B" -X POST "$BASE/api/admin/payments/anything" \
+  -H 'Content-Type: application/json' -d '{"action":"approve"}')
+check "a creator cannot approve payments" "^404" "$CODE"
+
+echo "== 18. a disabled gateway is refused server-side =="
+settings '{"bkashEnabled":false,"bkashNumber":"01700000000","bkashUsdRate":100}' > /dev/null
+OUT=$(curl -s -b "$A" -X POST "$BASE/api/payments/manual" -H 'Content-Type: application/json' \
+  -d '{"plan":"pro","trxId":"PROBEOFF01","senderNumber":"01711111111"}')
+check "bKash submission refused while disabled" "gateway_unavailable" "$OUT"
+OUT=$(curl -s -b "$A" -X POST "$BASE/api/billing/subscribe" -H 'Content-Type: application/json' \
+  -d '{"plan":"pro"}')
+check "Stripe subscribe refused while unconfigured" "gateway_unavailable" "$OUT"
+
+# Enabled but with no rate, so the gateway is switched on yet still unusable.
+settings '{"bkashEnabled":true,"bkashUsdRate":0}' > /dev/null
+OUT=$(curl -s -b "$A" -X POST "$BASE/api/payments/manual" -H 'Content-Type: application/json' \
+  -d '{"plan":"pro","trxId":"PROBENORATE","senderNumber":"01711111111"}')
+check "bKash refused when enabled but unusable" "gateway_unavailable" "$OUT"
+
+echo "== 19. a submitted payment cannot choose its own amount =="
+settings '{"bkashEnabled":true,"bkashNumber":"01700000000","bkashUsdRate":100}' > /dev/null
+# Pro is $49 and the rate is 100 BDT per USD, so the only honest figure is
+# 4900 BDT = 490000 poisha, whatever the client claims.
+OUT=$(curl -s -b "$A" -X POST "$BASE/api/payments/manual" -H 'Content-Type: application/json' \
+  -d '{"plan":"pro","trxId":"PROBEPAY01","senderNumber":"01711111111","amountCents":1,"currency":"USD","status":"APPROVED"}')
+check "amount is derived from the plan, not the request" '"amountCents":490000' "$OUT"
+check "a submission cannot approve itself" '"status":"PENDING"' "$OUT"
+
+echo "== 20. a transaction id can only be claimed once =="
+OUT=$(curl -s -b "$B" -X POST "$BASE/api/payments/manual" -H 'Content-Type: application/json' \
+  -d '{"plan":"starter","trxId":"probepay01","senderNumber":"01722222222"}')
+check "duplicate TrxID rejected across accounts" "duplicate_trx" "$OUT"
+OUT=$(curl -s -b "$A" -X POST "$BASE/api/payments/manual" -H 'Content-Type: application/json' \
+  -d '{"plan":"pro","trxId":"PROBEPAY01","senderNumber":"01711111111"}')
+check "duplicate TrxID rejected for the same account" "duplicate_trx" "$OUT"
+
+echo "== 21. approving twice does not grant two plan periods =="
+PAY_ID=$(curl -s -b "$ADMIN" "$BASE/api/admin/payments?status=PENDING" \
+  | sed -n 's/.*"payments":\[{"id":"\([^"]*\)".*/\1/p')
+OUT=$(curl -s -b "$ADMIN" -X POST "$BASE/api/admin/payments/$PAY_ID" \
+  -H 'Content-Type: application/json' -d '{"action":"approve"}')
+check "first approval activates the plan" '"status":"APPROVED"' "$OUT"
+FIRST_END=$(echo "$OUT" | sed -n 's/.*"planPeriodEnd":"\([^"]*\)".*/\1/p')
+if [ -z "$FIRST_END" ]; then
+  echo "  FAIL approval returned no planPeriodEnd: $OUT"; FAILED=$((FAILED + 1))
+fi
+OUT=$(curl -s -b "$ADMIN" -X POST "$BASE/api/admin/payments/$PAY_ID" \
+  -H 'Content-Type: application/json' -d '{"action":"approve"}')
+check "second approval is refused" "already approved" "$OUT"
+PROFILE=$(curl -s -b "$A" "$BASE/api/profile")
+check "plan is Pro Growth after approval" '"plan":"pro"' "$PROFILE"
+check "the paid-up-to date did not move" "$FIRST_END" "$PROFILE"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$B" -X POST "$BASE/api/admin/payments/$PAY_ID" \
+  -H 'Content-Type: application/json' -d '{"action":"approve"}')
+check "another creator cannot re-review it" "^404" "$CODE"
+
+echo "== cleanup: switch the platform gateways back off =="
+settings '{"bkashEnabled":false,"metaEnabled":false,"metaAppId":"","metaAppSecret":"","metaVerifyToken":""}' > /dev/null
 
 echo
 if [ "$FAILED" -eq 0 ]; then
