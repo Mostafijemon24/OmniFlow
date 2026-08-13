@@ -28,6 +28,11 @@ export function metaRedirectUri() {
   return `${appUrl()}/api/meta/oauth/callback`;
 }
 
+/** Linking Facebook to an existing session uses its own redirect URI. */
+export function facebookLinkRedirectUri() {
+  return `${appUrl()}/api/account/facebook/callback`;
+}
+
 export function oauthDialogUrl(
   connector: MetaConnector,
   args: { state: string; redirectUri: string; scope: string }

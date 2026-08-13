@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { signIn } from "next-auth/react";
+import { FormEvent, useEffect, useState } from "react";
+import { getProviders, signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useUi } from "@/components/providers/ui-provider";
 
@@ -11,6 +11,16 @@ export function AuthModal() {
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [facebookAvailable, setFacebookAvailable] = useState(false);
+
+  // The Facebook provider only exists once the admin has configured the Meta
+  // connector, so the button follows what the server actually offers.
+  useEffect(() => {
+    if (!authOpen) return;
+    getProviders()
+      .then((providers) => setFacebookAvailable(Boolean(providers?.facebook)))
+      .catch(() => setFacebookAvailable(false));
+  }, [authOpen]);
 
   if (!authOpen) return null;
 
@@ -151,6 +161,29 @@ export function AuthModal() {
                 : "Sign In To Dashboard"}
           </button>
         </form>
+
+        {facebookAvailable && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <span className="h-px flex-1 bg-slate-800" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                or
+              </span>
+              <span className="h-px flex-1 bg-slate-800" />
+            </div>
+            <button
+              type="button"
+              onClick={() => signIn("facebook", { callbackUrl: "/dashboard" })}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-800 bg-dark-900 py-3 text-xs font-bold text-white transition hover:bg-dark-800"
+            >
+              <i className="fa-brands fa-facebook text-[#1877F2]" /> Continue with Facebook
+            </button>
+            <p className="text-center text-[10px] text-slate-500">
+              If you already registered with this email and a password, sign in that way and link
+              Facebook from your Connections page.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

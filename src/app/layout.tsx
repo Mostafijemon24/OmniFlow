@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Providers } from "@/components/providers/session-provider";
 import { Header } from "@/components/layout/header";
+import { SocialErrorNotice } from "@/components/auth/social-error-notice";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -26,6 +28,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen bg-dark-950 bg-grid-pattern font-sans text-slate-100 antialiased selection:bg-brand-500 selection:text-white">
         <Providers>
+          <Suspense>
+            <SocialErrorNotice />
+          </Suspense>
           <div className="flex min-h-screen flex-col">
             <Header />
             {children}
