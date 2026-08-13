@@ -44,6 +44,7 @@ model User {
   metaAccounts         MetaAccount[]
   dmLogs               DmLog[]
   bookings             Booking[]
+  uploads              Upload[]
 
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
@@ -79,6 +80,24 @@ model Product {
   bookings        Booking[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+/// Ownership record for every file written to disk, so a creator can only
+/// attach deliverables and images that they uploaded themselves.
+model Upload {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bucket    String // "public" | "private"
+  key       String   @unique
+  name      String
+  mime      String
+  size      Int
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model ConsultationSlot {
@@ -90,6 +109,7 @@ model ConsultationSlot {
   booking   Booking?
   createdAt DateTime  @default(now())
 
+  @@unique([productId, startsAt])
   @@index([productId, startsAt])
 }
 
@@ -127,6 +147,7 @@ model AutoDMRule {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
+  @@unique([userId, platform, keyword])
   @@index([userId, keyword])
 }
 
@@ -174,6 +195,8 @@ model Order {
   updatedAt       DateTime       @updatedAt
 
   @@index([userId, createdAt])
+  @@index([userId, status])
+  @@index([productId])
 }
 
 model DownloadToken {
@@ -211,6 +234,8 @@ model DeliveryLog {
   status    String   // "sent" | "failed" | "unconfigured"
   detail    String?
   createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
 }
 
 model FunnelEvent {

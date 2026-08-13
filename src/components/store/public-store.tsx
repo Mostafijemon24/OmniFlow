@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Product, Profile } from "@/lib/types";
 import { useUi } from "@/components/providers/ui-provider";
 import { formatDateTime, initialsAvatar } from "@/lib/format";
@@ -25,7 +25,9 @@ export function PublicStore({
   gateways: { stripe: boolean; bkash: boolean };
 }) {
   const { triggerToast } = useUi();
+  const router = useRouter();
   const searchParams = useSearchParams();
+  const confirmed = useRef<string | null>(null);
   const [checkoutProduct, setCheckoutProduct] = useState<Product | null>(null);
   const [form, setForm] = useState({
     name: "",
@@ -42,16 +44,24 @@ export function PublicStore({
     async (orderId: string, sessionId: string | null) => {
       const params = new URLSearchParams({ orderId });
       if (sessionId) params.set("session_id", sessionId);
-      const res = await fetch(`/api/checkout/confirm?${params}`);
-      const data = await res.json();
-      if (data.status === "PAID") {
-        setFulfillment(data);
-        triggerToast("Payment confirmed. Your delivery is ready.");
-      } else if (data.error) {
-        triggerToast(data.error);
+
+      try {
+        const res = await fetch(`/api/checkout/confirm?${params}`);
+        const data = await res.json();
+        if (data.status === "PAID") {
+          setFulfillment(data);
+          triggerToast("Payment confirmed. Your delivery is ready.");
+          router.refresh();
+        } else if (data.error) {
+          triggerToast(data.error);
+        } else {
+          triggerToast("Payment is still being verified. Refresh in a moment.");
+        }
+      } catch {
+        triggerToast("Could not verify the payment. Please refresh.");
       }
     },
-    [triggerToast]
+    [router, triggerToast]
   );
 
   useEffect(() => {
@@ -60,10 +70,18 @@ export function PublicStore({
       const match = products.find((p) => p.id === prodId);
       if (match) setCheckoutProduct(match);
     }
+
     const orderId = searchParams.get("order");
-    if (orderId) confirmOrder(orderId, searchParams.get("session_id"));
+    if (orderId && confirmed.current !== orderId) {
+      confirmed.current = orderId;
+      confirmOrder(orderId, searchParams.get("session_id"));
+    }
+
     if (searchParams.get("checkout") === "cancel") {
       triggerToast("Payment was cancelled.");
+    }
+    if (searchParams.get("checkout") === "error") {
+      triggerToast("The payment could not be verified with the gateway.");
     }
   }, [searchParams, products, confirmOrder, triggerToast]);
 
@@ -84,38 +102,44 @@ export function PublicStore({
     setError("");
     setSubmitting(true);
 
-    const res = await fetch("/api/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        productId: checkoutProduct.id,
-        customerName: form.name,
-        customerEmail: form.email,
-        customerPhone: form.phone,
-        gateway: form.gateway,
-        slotId: checkoutProduct.type === "consultation" ? form.slotId : undefined,
-      }),
-    });
-    const data = await res.json();
-    setSubmitting(false);
+    try {
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: checkoutProduct.id,
+          customerName: form.name,
+          customerEmail: form.email,
+          customerPhone: form.phone || undefined,
+          gateway: form.gateway,
+          slotId: checkoutProduct.type === "consultation" ? form.slotId : undefined,
+        }),
+      });
+      const data = await res.json();
 
-    if (!res.ok) {
-      setError(data.error || "Checkout failed.");
-      return;
+      if (!res.ok) {
+        setError(data.error || "Checkout failed.");
+        return;
+      }
+
+      if (data.mode === "redirect") {
+        window.location.href = data.url;
+        return;
+      }
+
+      setCheckoutProduct(null);
+      setFulfillment({
+        productType: checkoutProduct.type,
+        downloadUrl: data.downloadUrl,
+        meetingLink: data.meetingLink,
+      });
+      triggerToast("Order complete.");
+      router.refresh();
+    } catch {
+      setError("Could not reach the checkout service. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
-
-    if (data.mode === "redirect") {
-      window.location.href = data.url;
-      return;
-    }
-
-    setCheckoutProduct(null);
-    setFulfillment({
-      productType: checkoutProduct.type,
-      downloadUrl: data.downloadUrl,
-      meetingLink: data.meetingLink,
-    });
-    triggerToast("Order complete.");
   }
 
   const avatar = profile.avatar || initialsAvatar(profile.fullName);
@@ -131,9 +155,7 @@ export function PublicStore({
           className="mx-auto h-24 w-24 rounded-full border-4 border-brand-500 object-cover shadow-2xl"
         />
         <div>
-          <h2 className="flex items-center justify-center gap-2 text-lg font-extrabold text-white">
-            {profile.fullName} <i className="fa-solid fa-circle-check text-sm text-brand-500" />
-          </h2>
+          <h2 className="text-lg font-extrabold text-white">{profile.fullName}</h2>
           {profile.headline && (
             <p className="mt-0.5 text-xs font-bold text-brand-400">{profile.headline}</p>
           )}

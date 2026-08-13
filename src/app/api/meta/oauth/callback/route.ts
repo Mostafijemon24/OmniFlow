@@ -32,32 +32,49 @@ export async function GET(req: NextRequest) {
     }
 
     const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000) : null;
+    let connected = 0;
+    let claimedElsewhere = 0;
 
     for (const page of pages) {
       const igId = page.instagram_business_account?.id ?? null;
-      await prisma.metaAccount.upsert({
-        where: { pageId: page.id },
-        update: {
-          userId: user.id,
-          pageName: page.name,
-          igUserId: igId,
-          platform: igId ? "instagram" : "facebook",
-          accessToken: encrypt(page.access_token),
-          tokenExpiresAt: expiresAt,
-        },
-        create: {
-          userId: user.id,
-          pageId: page.id,
-          pageName: page.name,
-          igUserId: igId,
-          platform: igId ? "instagram" : "facebook",
-          accessToken: encrypt(page.access_token),
-          tokenExpiresAt: expiresAt,
-        },
-      });
+
+      // A page is globally unique, so re-connecting must never move someone
+      // else's page (and its stored token) onto this account.
+      const existing = await prisma.metaAccount.findUnique({ where: { pageId: page.id } });
+      if (existing && existing.userId !== user.id) {
+        claimedElsewhere++;
+        continue;
+      }
+
+      const data = {
+        pageName: page.name,
+        igUserId: igId,
+        platform: igId ? "instagram" : "facebook",
+        accessToken: encrypt(page.access_token),
+        tokenExpiresAt: expiresAt,
+      };
+
+      if (existing) {
+        await prisma.metaAccount.update({ where: { id: existing.id }, data });
+      } else {
+        await prisma.metaAccount.create({
+          data: { ...data, userId: user.id, pageId: page.id },
+        });
+      }
+      connected++;
     }
 
-    return NextResponse.redirect(`${settings}?meta_connected=${pages.length}`);
+    if (!connected) {
+      return NextResponse.redirect(
+        `${settings}?meta_error=${encodeURIComponent(
+          "Those pages are already connected to another OmniFlow account."
+        )}`
+      );
+    }
+
+    return NextResponse.redirect(
+      `${settings}?meta_connected=${connected}${claimedElsewhere ? `&meta_skipped=${claimedElsewhere}` : ""}`
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Meta connection failed.";
     return NextResponse.redirect(`${settings}?meta_error=${encodeURIComponent(message)}`);

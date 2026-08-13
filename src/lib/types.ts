@@ -67,6 +67,8 @@ export type AutoRule = {
   metaAccount?: { id: string; pageName: string; platform: string; subscribed: boolean } | null;
 };
 
+export type CurrencyTotal = { currency: string; cents: number };
+
 export type OrderRow = {
   id: string;
   customerName: string;
@@ -80,8 +82,17 @@ export type OrderRow = {
   deliveryStatus: string | null;
   deliveryDetail: string | null;
   downloadUrl: string | null;
+  downloadExpiresAt: string | null;
+  downloadsLeft: number | null;
   bookingStartsAt: string | null;
   createdAt: string;
+};
+
+export type OrdersResponse = {
+  total: number;
+  truncated: boolean;
+  revenue: CurrencyTotal[];
+  orders: OrderRow[];
 };
 
 export type Analytics = {
@@ -91,7 +102,7 @@ export type Analytics = {
   autoDmsFailed: number;
   bioVisits: number;
   ordersClosed: number;
-  revenueCents: number;
+  revenue: CurrencyTotal[];
   avgDmLatencyMs: number | null;
   commentToOrderRate: number | null;
   visitToOrderRate: number | null;

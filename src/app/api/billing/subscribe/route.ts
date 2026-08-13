@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const parsed = schema.safeParse(await req.json());
+  const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid plan." }, { status: 400 });
 
   const plan = PLANS[parsed.data.plan];
@@ -25,6 +25,31 @@ export async function POST(req: Request) {
       },
       { status: 409 }
     );
+  }
+  if (user.plan === plan.id && user.planStatus === "active") {
+    return NextResponse.json({ error: `${plan.name} is already active.` }, { status: 409 });
+  }
+
+  // Switching plans must move the existing subscription rather than opening a
+  // second Checkout session, which would bill the creator twice.
+  if (user.stripeSubscriptionId) {
+    try {
+      const existing = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+      if (existing.status === "active" || existing.status === "trialing") {
+        const updated = await stripe.subscriptions.update(existing.id, {
+          items: [{ id: existing.items.data[0].id, price: priceId }],
+          proration_behavior: "create_prorations",
+          metadata: { userId: user.id, plan: plan.id },
+        });
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { plan: plan.id, planStatus: updated.status === "active" ? "active" : updated.status },
+        });
+        return NextResponse.json({ switched: true, plan: plan.id });
+      }
+    } catch (error) {
+      console.error("subscription switch", error);
+    }
   }
 
   let customerId = user.stripeCustomerId;

@@ -3,14 +3,17 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/utils";
 import { monthStart, planOf } from "@/lib/plans";
 
+const RANGES = [7, 30, 90];
+
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const days = Math.min(Number(req.nextUrl.searchParams.get("days") || 30), 365);
+  const requested = Number(req.nextUrl.searchParams.get("days"));
+  const days = RANGES.includes(requested) ? requested : 30;
   const since = new Date(Date.now() - days * 86400000);
 
-  const [comments, dmsSent, dmsFailed, visits, paidOrders, latency, dmThisMonth, recentDms] =
+  const [comments, dmsSent, dmsFailed, visits, revenue, latency, dmThisMonth, recentDms] =
     await Promise.all([
       prisma.funnelEvent.count({
         where: { userId: user.id, type: "comment_detected", createdAt: { gte: since } },
@@ -24,9 +27,11 @@ export async function GET(req: NextRequest) {
       prisma.funnelEvent.count({
         where: { userId: user.id, type: "bio_visit", createdAt: { gte: since } },
       }),
-      prisma.order.findMany({
+      prisma.order.groupBy({
+        by: ["currency"],
         where: { userId: user.id, status: "PAID", createdAt: { gte: since } },
-        select: { amountCents: true, currency: true },
+        _sum: { amountCents: true },
+        _count: { _all: true },
       }),
       prisma.dmLog.aggregate({
         where: { userId: user.id, status: "sent", createdAt: { gte: since } },
@@ -52,7 +57,9 @@ export async function GET(req: NextRequest) {
     ]);
 
   const plan = planOf(user.plan);
-  const revenueCents = paidOrders.reduce((sum, o) => sum + o.amountCents, 0);
+  const ordersClosed = revenue.reduce((sum, row) => sum + row._count._all, 0);
+  const rate = (denominator: number) =>
+    denominator ? Number(((ordersClosed / denominator) * 100).toFixed(1)) : null;
 
   return NextResponse.json({
     days,
@@ -60,11 +67,15 @@ export async function GET(req: NextRequest) {
     autoDmsSent: dmsSent,
     autoDmsFailed: dmsFailed,
     bioVisits: visits,
-    ordersClosed: paidOrders.length,
-    revenueCents,
+    ordersClosed,
+    // Currencies are never summed together: each gateway currency is reported
+    // separately so the totals stay truthful.
+    revenue: revenue
+      .map((row) => ({ currency: row.currency, cents: row._sum.amountCents ?? 0 }))
+      .sort((a, b) => b.cents - a.cents),
     avgDmLatencyMs: latency._avg.latencyMs ? Math.round(latency._avg.latencyMs) : null,
-    commentToOrderRate: comments ? Number(((paidOrders.length / comments) * 100).toFixed(1)) : null,
-    visitToOrderRate: visits ? Number(((paidOrders.length / visits) * 100).toFixed(1)) : null,
+    commentToOrderRate: rate(comments),
+    visitToOrderRate: rate(visits),
     dmQuota: {
       used: dmThisMonth,
       limit: Number.isFinite(plan.maxDmsPerMonth) ? plan.maxDmsPerMonth : null,

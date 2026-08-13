@@ -3,51 +3,75 @@ import { randomToken } from "./crypto";
 import { appUrl } from "./utils";
 import { deliveryEmailHtml, sendEmail } from "./email";
 
-const DOWNLOAD_TTL_HOURS = Number(process.env.DOWNLOAD_TTL_HOURS || 72);
+const DOWNLOAD_TTL_HOURS = Math.max(1, Number(process.env.DOWNLOAD_TTL_HOURS) || 72);
+
+export function downloadExpiry() {
+  return new Date(Date.now() + DOWNLOAD_TTL_HOURS * 3600 * 1000);
+}
 
 /**
  * Marks an order paid exactly once, then books the slot (consultations) or
  * issues a signed download link (digital files) and emails the buyer.
+ *
+ * The `deliveredAt` column is the idempotency key: claiming it with a
+ * conditional update means the checkout confirm endpoint and the Stripe webhook
+ * can both call this concurrently without double-fulfilling.
  */
 export async function fulfillOrder(orderId: string) {
+  const claim = await prisma.order.updateMany({
+    where: { id: orderId, deliveredAt: null },
+    data: { status: "PAID", deliveredAt: new Date() },
+  });
+
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: { product: true, user: true, downloadToken: true, booking: true },
   });
   if (!order) throw new Error("Order not found.");
-  if (order.status === "PAID" && order.deliveredAt) {
-    return { alreadyFulfilled: true, order };
+
+  if (claim.count === 0) {
+    return {
+      alreadyFulfilled: true,
+      order,
+      downloadUrl: order.downloadToken
+        ? `${appUrl()}/api/download/${order.downloadToken.token}`
+        : undefined,
+      meetingLink: order.booking?.meetingLink ?? undefined,
+    };
   }
 
-  await prisma.order.update({
-    where: { id: order.id },
-    data: { status: "PAID" },
-  });
-
-  await prisma.product.update({
-    where: { id: order.productId },
-    data: { salesCount: { increment: 1 } },
-  });
-
-  await prisma.funnelEvent.create({
-    data: { userId: order.userId, type: "order_closed", metadata: order.id },
-  });
+  await prisma.$transaction([
+    prisma.product.update({
+      where: { id: order.productId },
+      data: { salesCount: { increment: 1 } },
+    }),
+    prisma.funnelEvent.create({
+      data: { userId: order.userId, type: "order_closed", metadata: order.id },
+    }),
+  ]);
 
   let downloadUrl: string | undefined;
   let expiresAt: Date | undefined;
   let meetingLink: string | undefined;
   let startsAt: Date | null = null;
+  let slotConflict = false;
 
   if (order.product.type === "consultation") {
     const slot = order.slotId
       ? await prisma.consultationSlot.findUnique({ where: { id: order.slotId } })
       : null;
 
-    if (slot && !slot.booked) {
-      await prisma.consultationSlot.update({
-        where: { id: slot.id },
+    let slotId: string | null = null;
+    if (slot) {
+      const booked = await prisma.consultationSlot.updateMany({
+        where: { id: slot.id, booked: false },
         data: { booked: true },
       });
+      if (booked.count === 1) {
+        slotId = slot.id;
+      } else {
+        slotConflict = true;
+      }
     }
 
     startsAt = slot?.startsAt ?? new Date();
@@ -59,7 +83,7 @@ export async function fulfillOrder(orderId: string) {
           orderId: order.id,
           userId: order.userId,
           productId: order.productId,
-          slotId: slot?.id,
+          slotId,
           startsAt,
           meetingLink,
           status: "CONFIRMED",
@@ -67,15 +91,13 @@ export async function fulfillOrder(orderId: string) {
       });
     }
   } else {
-    expiresAt = new Date(Date.now() + DOWNLOAD_TTL_HOURS * 3600 * 1000);
-    const token =
-      order.downloadToken?.token ??
-      (
-        await prisma.downloadToken.create({
-          data: { token: randomToken(24), orderId: order.id, expiresAt },
-        })
-      ).token;
-    downloadUrl = `${appUrl()}/api/download/${token}`;
+    expiresAt = downloadExpiry();
+    const token = await prisma.downloadToken.upsert({
+      where: { orderId: order.id },
+      create: { token: randomToken(24), orderId: order.id, expiresAt },
+      update: { expiresAt },
+    });
+    downloadUrl = `${appUrl()}/api/download/${token.token}`;
   }
 
   const result = await sendEmail({
@@ -90,7 +112,11 @@ export async function fulfillOrder(orderId: string) {
       startsAt,
       expiresAt,
     }),
-  });
+  }).catch((error) => ({
+    ok: false as const,
+    status: "failed" as const,
+    detail: error instanceof Error ? error.message.slice(0, 500) : "Email transport error.",
+  }));
 
   await prisma.deliveryLog.create({
     data: {
@@ -101,9 +127,20 @@ export async function fulfillOrder(orderId: string) {
     },
   });
 
-  const fulfilled = await prisma.order.update({
+  if (slotConflict) {
+    await prisma.deliveryLog.create({
+      data: {
+        orderId: order.id,
+        channel: "email",
+        status: "failed",
+        detail:
+          "The chosen slot was taken while payment was in flight. Confirm a new time with the buyer.",
+      },
+    });
+  }
+
+  const fulfilled = await prisma.order.findUniqueOrThrow({
     where: { id: order.id },
-    data: { deliveredAt: new Date() },
     include: { product: true, downloadToken: true, booking: true },
   });
 

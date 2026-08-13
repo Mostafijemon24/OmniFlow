@@ -140,8 +140,14 @@ export function ProductEditor({
               <button
                 type="button"
                 key={t}
+                disabled={Boolean(product)}
                 onClick={() => setDraft({ ...draft, type: t })}
-                className={`rounded-xl border p-2.5 text-xs font-bold transition ${
+                title={
+                  product
+                    ? "Product type cannot change after publishing — create a new product instead."
+                    : undefined
+                }
+                className={`rounded-xl border p-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${
                   draft.type === t
                     ? "border-brand-500 bg-brand-600/20 text-white"
                     : "border-slate-800 bg-dark-900 text-slate-400"

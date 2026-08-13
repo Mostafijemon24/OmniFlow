@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser, storeUrl } from "@/lib/utils";
+import { resolveRule } from "@/lib/meta";
 
 const schema = z.object({
   comment: z.string().min(1).max(500),
@@ -16,7 +17,7 @@ export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const parsed = schema.safeParse(await req.json());
+  const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Comment text is required." }, { status: 400 });
   }
@@ -31,9 +32,7 @@ export async function POST(req: Request) {
     orderBy: { createdAt: "desc" },
   });
 
-  const matched = rules.find((rule) =>
-    parsed.data.comment.toUpperCase().includes(rule.keyword.toUpperCase())
-  );
+  const matched = resolveRule(parsed.data.comment, rules);
 
   if (!matched) return NextResponse.json({ matched: false });
 

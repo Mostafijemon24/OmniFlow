@@ -1,12 +1,25 @@
 import crypto from "crypto";
 
+const MIN_KEY_LENGTH = 32;
+const KDF_SALT = "omniflow.aes-256-gcm.v1";
+
+let cachedKey: Buffer | null = null;
+
 function key() {
-  const secret =
-    process.env.ENCRYPTION_KEY || process.env.NEXTAUTH_SECRET || "";
+  if (cachedKey) return cachedKey;
+
+  const secret = process.env.ENCRYPTION_KEY ?? "";
   if (!secret) {
-    throw new Error("ENCRYPTION_KEY or NEXTAUTH_SECRET must be set.");
+    throw new Error("ENCRYPTION_KEY must be set to encrypt gateway credentials.");
   }
-  return crypto.createHash("sha256").update(secret).digest();
+  if (secret.length < MIN_KEY_LENGTH) {
+    throw new Error(
+      `ENCRYPTION_KEY must be at least ${MIN_KEY_LENGTH} characters (got ${secret.length}).`
+    );
+  }
+
+  cachedKey = crypto.scryptSync(secret, KDF_SALT, 32);
+  return cachedKey;
 }
 
 export function encrypt(plain: string) {
@@ -37,8 +50,7 @@ export function randomToken(bytes = 32) {
 }
 
 export function safeEqual(a: string, b: string) {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
+  const digestA = crypto.createHash("sha256").update(a).digest();
+  const digestB = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(digestA, digestB);
 }

@@ -3,6 +3,12 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 
+/**
+ * Compared against when no account matches, so a wrong email and a wrong
+ * password cost the same amount of time.
+ */
+const DUMMY_HASH = bcrypt.hashSync("omniflow-timing-equaliser", 12);
+
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },
   pages: { signIn: "/" },
@@ -19,10 +25,9 @@ export const authOptions: NextAuthOptions = {
         const user = await prisma.user.findUnique({
           where: { email: credentials.email.toLowerCase().trim() },
         });
-        if (!user) return null;
 
-        const valid = await bcrypt.compare(credentials.password, user.passwordHash);
-        if (!valid) return null;
+        const valid = await bcrypt.compare(credentials.password, user?.passwordHash ?? DUMMY_HASH);
+        if (!user || !valid) return null;
 
         return {
           id: user.id,

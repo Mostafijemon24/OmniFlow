@@ -9,13 +9,14 @@ const PALETTES = [
 ];
 
 export function GET(req: NextRequest) {
-  const name = (req.nextUrl.searchParams.get("name") || "OmniFlow").trim();
+  const name = (req.nextUrl.searchParams.get("name") || "OmniFlow").trim().slice(0, 80);
   const initials = name
     .split(/\s+/)
     .slice(0, 2)
     .map((part) => part[0] ?? "")
     .join("")
-    .toUpperCase();
+    .toLocaleUpperCase()
+    .replace(/[<>&"']/g, "");
 
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { Product, Profile } from "@/lib/types";
 import { useUi } from "@/components/providers/ui-provider";
@@ -17,36 +17,67 @@ export default function StoreBuilderPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [loadError, setLoadError] = useState("");
+
+  // Persisted values, so blurring a field the creator did not touch does not
+  // fire a needless save, and so a failed save can be reverted precisely.
+  const saved = useRef<Partial<Profile>>({});
+  const pending = useRef(0);
 
   const load = useCallback(async () => {
-    const [p, prods] = await Promise.all([
-      fetch("/api/profile").then((r) => r.json()),
-      fetch("/api/products").then((r) => r.json()),
-    ]);
-    if (!p.error) setProfile(p);
-    setProducts(Array.isArray(prods) ? prods : []);
+    try {
+      const [p, prods] = await Promise.all([
+        fetch("/api/profile").then((r) => r.json()),
+        fetch("/api/products").then((r) => r.json()),
+      ]);
+      if (p.error) throw new Error(p.error);
+      setProfile(p);
+      saved.current = p;
+      setProducts(Array.isArray(prods) ? prods : []);
+      setLoadError("");
+    } catch {
+      setLoadError("Your studio could not be loaded. Check your connection and retry.");
+    }
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (status !== "Saved") return;
+    const t = setTimeout(() => setStatus(""), 1500);
+    return () => clearTimeout(t);
+  }, [status]);
+
   async function saveProfile(patch: Partial<Profile>) {
+    const changed = Object.entries(patch).some(
+      ([field, value]) => saved.current[field as keyof Profile] !== value
+    );
+    if (!changed) return;
+
+    const ticket = ++pending.current;
     setStatus("Saving...");
+
     const res = await fetch("/api/profile", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
     const data = await res.json();
+
+    // A slower earlier save must not overwrite the outcome of a later one.
+    if (ticket !== pending.current) return;
+
     if (!res.ok) {
       setStatus("");
       triggerToast(data.error || "Could not save profile.");
       await load();
       return;
     }
+
+    saved.current = { ...saved.current, ...patch };
     setStatus("Saved");
-    setTimeout(() => setStatus(""), 1500);
     if (patch.username) await update({ username: data.username });
   }
 
@@ -63,7 +94,7 @@ export default function StoreBuilderPage() {
       return;
     }
     setProfile((p) => (p ? { ...p, avatar: data.url } : p));
-    saveProfile({ avatar: data.url });
+    await saveProfile({ avatar: data.url });
   }
 
   async function deleteProduct(product: Product) {
@@ -78,15 +109,33 @@ export default function StoreBuilderPage() {
   }
 
   async function toggleActive(product: Product) {
-    await fetch(`/api/products/${product.id}`, {
+    const res = await fetch(`/api/products/${product.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ active: !product.active }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      triggerToast(data.error || "Could not change visibility.");
+    }
     load();
   }
 
-  if (!profile) return <p className="text-xs text-slate-400">Loading your studio...</p>;
+  if (!profile) {
+    return loadError ? (
+      <div className="space-y-3 text-xs text-slate-400">
+        <p className="text-rose-300">{loadError}</p>
+        <button
+          onClick={load}
+          className="rounded-lg border border-slate-700 bg-dark-900 px-3 py-2 font-bold text-white transition hover:bg-dark-800"
+        >
+          Retry
+        </button>
+      </div>
+    ) : (
+      <p className="text-xs text-slate-400">Loading your studio...</p>
+    );
+  }
 
   const avatar = profile.avatar || initialsAvatar(profile.fullName);
   const limitReached =
@@ -252,7 +301,7 @@ export default function StoreBuilderPage() {
       <div className="flex flex-col items-center xl:col-span-5">
         <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-slate-400">
           <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-          Real-Time Mobile Simulator
+          Live preview of your public storefront
         </div>
         <div className="relative h-[620px] w-[320px] overflow-hidden rounded-[42px] border-[6px] border-slate-800 bg-black p-3 shadow-2xl">
           <div className="h-full w-full overflow-y-auto rounded-[34px] bg-slate-950 p-4 pt-8 text-white">

@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useUi } from "@/components/providers/ui-provider";
+import { PLAN_LIST } from "@/lib/plans";
 
 const faqs = [
   {
     q: "Is OmniFlow compliant with Instagram & Facebook policies?",
-    a: "Yes! OmniFlow operates strictly using official Meta Graph APIs and Webhook endpoints. All auto-DMs adhere to 24-hour messaging policies and spam protection guardrails.",
+    a: "OmniFlow only calls the official Meta Graph API. Comment webhooks are signature-verified, each comment is de-duplicated so a Meta retry can never send a second DM, replies are sent with private_replies, and anything outside Meta's 24-hour messaging window is refused and logged instead of sent.",
   },
   {
     q: "Do I need coding knowledge to set this up?",
@@ -16,11 +17,11 @@ const faqs = [
   },
   {
     q: "How are digital files delivered to buyers?",
-    a: "When a customer completes payment on your OmniFlow store page, our system automatically emails them an encrypted direct download link for your PDF, video, or zip file.",
+    a: "Deliverables are stored outside the public web root. Once payment is verified with the gateway, OmniFlow mints a single-purpose download link that expires and stops working after a set number of downloads, then emails it to the buyer. The link is always available from your Orders CRM as well.",
   },
   {
     q: "Does OmniFlow charge transaction fees on sales?",
-    a: "No! On our Pro Growth and Agency plans, we charge 0% platform transaction fees. You keep 100% of your earnings minus standard payment gateway processing fees.",
+    a: "No, on every plan. Buyers pay into your own Stripe or bKash account, so the money never passes through OmniFlow — you only pay your gateway's standard processing fee.",
   },
 ];
 
@@ -29,13 +30,13 @@ const features = [
     icon: "fa-robot",
     color: "brand",
     title: "Social Comment Auto-DM",
-    body: "Map custom trigger keywords like `#KIT`, `PRICE`, or `GUIDE` to Instagram and Facebook posts. When followers comment, direct store checkout links are dispatched to their DMs in under 1.5 seconds.",
+    body: "Map trigger keywords like #KIT, PRICE, or GUIDE to your Instagram and Facebook pages. When a follower comments, OmniFlow answers the comment webhook with a private reply containing their checkout link.",
   },
   {
     icon: "fa-store",
     color: "purple",
     title: "Custom Bio Store",
-    body: "Host your eBooks, courses, coaching calls, and digital downloads on your custom link handle (`omniflow.bio/yourname`). High-speed loading with optimized mobile UX.",
+    body: "Host your eBooks, courses, coaching calls, and digital downloads on your own handle. Mobile-first storefront, rendered server-side on every request so your catalogue is never stale.",
   },
   {
     icon: "fa-file-arrow-down",
@@ -88,18 +89,26 @@ export default function LandingPage() {
   const router = useRouter();
   const [monthlyComments, setMonthlyComments] = useState(1000);
   const [avgProductPrice, setAvgProductPrice] = useState(39);
+  const [assumedConversion, setAssumedConversion] = useState(10);
   const [openFaq, setOpenFaq] = useState(0);
   const [stats, setStats] = useState<PlatformStats | null>(null);
 
   useEffect(() => {
+    let active = true;
+
     fetch("/api/stats")
       .then((r) => r.json())
-      .then((data) => (data.error ? null : setStats(data)))
-      .catch(() => null);
-  }, []);
+      .then((data) => {
+        if (!active || data.error) return;
+        setStats(data);
+        if (data.commentToOrderRate > 0) setAssumedConversion(data.commentToOrderRate);
+      })
+      .catch(() => undefined);
 
-  const conversionRate =
-    stats?.commentToOrderRate && stats.commentToOrderRate > 0 ? stats.commentToOrderRate / 100 : 0.15;
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const liveMetrics = [
     {
@@ -138,7 +147,7 @@ export default function LandingPage() {
       <section className="relative mx-auto max-w-5xl space-y-6 px-4 pt-16 text-center md:pt-24">
         <div className="inline-flex items-center gap-2 rounded-full border border-brand-500/20 bg-brand-500/10 px-4 py-2 text-xs font-semibold text-brand-400">
           <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-          The #1 Social Commerce & Auto-DM Platform for Content Creators
+          Social commerce and Auto-DM, built on the official Meta Graph API
         </div>
 
         <h1 className="text-4xl font-black leading-tight tracking-tight text-white md:text-6xl">
@@ -191,8 +200,8 @@ export default function LandingPage() {
           </span>
           <h2 className="text-3xl font-extrabold text-white md:text-4xl">Why We Built OmniFlow</h2>
           <p className="mx-auto max-w-2xl text-sm text-slate-400">
-            For years, content creators lost over 80% of potential buyers because of traditional
-            &quot;link-in-bio&quot; barriers. OmniFlow bridges engagement and monetization effortlessly.
+            Every step a follower has to take between wanting your product and paying for it is a
+            step they can abandon. OmniFlow removes the ones you control.
           </p>
         </div>
 
@@ -206,8 +215,8 @@ export default function LandingPage() {
               {[
                 "Follower sees your Reel or post and wants your eBook or course.",
                 "They have to leave the feed, open your profile, and click a link.",
-                "They get lost in a cluttered link tree with 15 different buttons.",
-                "Result: Over 85% dropoff rate and thousands of lost dollars.",
+                "They land on a cluttered link tree and hunt for the right button.",
+                "Every extra tap is another chance to close the tab instead of buying.",
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2">
                   <i className="fa-solid fa-circle-xmark mt-0.5 text-red-400" />
@@ -226,8 +235,8 @@ export default function LandingPage() {
               {[
                 'You add a trigger word in your caption (e.g., "Comment #KIT").',
                 'The follower comments "#KIT" without leaving their social feed.',
-                "OmniFlow auto-sends an instant direct message with their checkout link.",
-                "Result: Immediate impulse purchases and 3.4x higher overall conversions.",
+                "OmniFlow answers the comment webhook with a private reply containing the checkout link.",
+                "They pay in the DM thread, and the file or booking is delivered automatically.",
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2">
                   <i className="fa-solid fa-circle-check mt-0.5 text-emerald-400" />
@@ -317,6 +326,21 @@ export default function LandingPage() {
                   className="w-full cursor-pointer accent-emerald-500"
                 />
               </div>
+              <div>
+                <div className="mb-2 flex justify-between text-xs font-bold text-slate-300">
+                  <span>Comment-to-purchase rate you expect:</span>
+                  <span className="text-sky-400">{assumedConversion}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="50"
+                  step="1"
+                  value={assumedConversion}
+                  onChange={(e) => setAssumedConversion(Number(e.target.value))}
+                  className="w-full cursor-pointer accent-sky-500"
+                />
+              </div>
             </div>
 
             <div className="space-y-3 rounded-2xl border border-slate-800 bg-dark-900/90 p-6 text-center">
@@ -324,13 +348,17 @@ export default function LandingPage() {
                 Estimated Passive Revenue
               </span>
               <div className="text-4xl font-black text-emerald-400">
-                ${Math.round(monthlyComments * conversionRate * avgProductPrice).toLocaleString()}{" "}
+                $
+                {Math.round(
+                  monthlyComments * (assumedConversion / 100) * avgProductPrice
+                ).toLocaleString()}{" "}
                 <span className="text-xs font-normal text-slate-400">/ month</span>
               </div>
               <p className="text-[11px] leading-relaxed text-slate-400">
+                This is arithmetic on the three values above, not a forecast.{" "}
                 {stats?.commentToOrderRate
-                  ? `Based on the live ${stats.commentToOrderRate}% comment-to-order rate measured across OmniFlow stores.`
-                  : "Based on a 15% comment-to-purchase baseline until your store records its own conversion data."}
+                  ? `The slider starts at the ${stats.commentToOrderRate}% comment-to-order rate currently measured across OmniFlow stores.`
+                  : "No OmniFlow store has recorded a comment-to-order rate yet, so pick your own assumption."}
               </p>
               <button
                 onClick={() => openAuth("register")}
@@ -349,79 +377,58 @@ export default function LandingPage() {
             Transparent SaaS Pricing
           </span>
           <h2 className="text-2xl font-extrabold text-white md:text-3xl">Choose Your Creator Plan</h2>
-          <p className="text-xs text-slate-400">Scale your passive social sales without transaction fees.</p>
+          <p className="text-xs text-slate-400">
+            OmniFlow takes no cut of your sales — you pay your own gateway&apos;s processing fees.
+          </p>
         </div>
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-          <div className="glass-card flex flex-col justify-between space-y-6 rounded-3xl border border-slate-800 p-6">
-            <div className="space-y-4">
-              <span className="block text-xs font-bold uppercase tracking-wider text-slate-400">Starter</span>
-              <div className="text-3xl font-black text-white">
-                $19 <span className="text-xs font-normal text-slate-400">/month</span>
-              </div>
-              <p className="text-xs text-slate-400">Ideal for new creators launching their first digital product.</p>
-              <ul className="space-y-2 text-xs text-slate-300">
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> 1 Bio Store Profile</li>
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> Up to 3 Digital Products</li>
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> 500 Auto-DMs per month</li>
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> Standard Analytics</li>
-              </ul>
-            </div>
-            <button
-              onClick={() => openAuth("register")}
-              className="w-full rounded-xl border border-slate-800 bg-dark-900 py-3 text-xs font-bold text-white transition hover:bg-dark-800"
-            >
-              Start Starter Plan
-            </button>
-          </div>
+          {PLAN_LIST.map((plan) => {
+            const highlighted = plan.id === "pro";
 
-          <div className="glass-card relative flex flex-col justify-between space-y-6 rounded-3xl border-2 border-brand-500 p-6 shadow-2xl shadow-brand-500/10">
-            <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full border border-brand-400/30 bg-brand-600 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-white">
-              Most Popular
-            </span>
-            <div className="space-y-4 pt-2">
-              <span className="block text-xs font-bold uppercase tracking-wider text-brand-400">Pro Growth</span>
-              <div className="text-3xl font-black text-white">
-                $49 <span className="text-xs font-normal text-slate-400">/month</span>
+            return (
+              <div
+                key={plan.id}
+                className={`glass-card relative flex flex-col justify-between space-y-6 rounded-3xl p-6 ${
+                  highlighted
+                    ? "border-2 border-brand-500 shadow-2xl shadow-brand-500/10"
+                    : "border border-slate-800"
+                }`}
+              >
+                <div className="space-y-4">
+                  <span
+                    className={`block text-xs font-bold uppercase tracking-wider ${
+                      highlighted ? "text-brand-400" : "text-slate-400"
+                    }`}
+                  >
+                    {plan.name}
+                  </span>
+                  <div className="text-3xl font-black text-white">
+                    ${plan.priceUsd}{" "}
+                    <span className="text-xs font-normal text-slate-400">/month</span>
+                  </div>
+                  <p className="text-xs text-slate-400">{plan.tagline}</p>
+                  <ul className="space-y-2 text-xs text-slate-300">
+                    {plan.features.map((feature) => (
+                      <li key={feature}>
+                        <i className="fa-solid fa-check mr-2 text-emerald-400" /> {feature}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <button
+                  onClick={() => openAuth("register")}
+                  className={`w-full rounded-xl py-3 text-xs font-bold text-white transition ${
+                    highlighted
+                      ? "bg-brand-600 shadow-lg hover:bg-brand-500"
+                      : "border border-slate-800 bg-dark-900 hover:bg-dark-800"
+                  }`}
+                >
+                  Start with {plan.name}
+                </button>
               </div>
-              <p className="text-xs text-slate-400">For active solopreneurs scaling social sales and bookings.</p>
-              <ul className="space-y-2 text-xs text-slate-300">
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> Unlimited Products & Calls</li>
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> Unlimited Auto-DMs (IG & FB)</li>
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> Custom Domain Support</li>
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> Advanced Funnel Analytics</li>
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> 0% Transaction Fees</li>
-              </ul>
-            </div>
-            <button
-              onClick={() => openAuth("register")}
-              className="w-full rounded-xl bg-brand-600 py-3 text-xs font-bold text-white shadow-lg transition hover:bg-brand-500"
-            >
-              Start Pro Free Trial
-            </button>
-          </div>
-
-          <div className="glass-card flex flex-col justify-between space-y-6 rounded-3xl border border-slate-800 p-6">
-            <div className="space-y-4">
-              <span className="block text-xs font-bold uppercase tracking-wider text-slate-400">Agency & Team</span>
-              <div className="text-3xl font-black text-white">
-                $99 <span className="text-xs font-normal text-slate-400">/month</span>
-              </div>
-              <p className="text-xs text-slate-400">Manage multiple creator accounts and client campaigns.</p>
-              <ul className="space-y-2 text-xs text-slate-300">
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> 10 Creator Profiles</li>
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> Team Collaboration</li>
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> Dedicated Account Manager</li>
-                <li><i className="fa-solid fa-check mr-2 text-emerald-400" /> Priority API Webhook Routing</li>
-              </ul>
-            </div>
-            <button
-              onClick={() => openAuth("register")}
-              className="w-full rounded-xl border border-slate-800 bg-dark-900 py-3 text-xs font-bold text-white transition hover:bg-dark-800"
-            >
-              Contact Agency Sales
-            </button>
-          </div>
+            );
+          })}
         </div>
       </section>
 
@@ -456,12 +463,10 @@ export default function LandingPage() {
       </section>
 
       <footer className="space-y-3 border-t border-slate-900 pt-12 text-center text-xs text-slate-500">
-        <p>© 2026 OmniFlow Inc. All rights reserved. Official Meta API Partner SaaS Platform.</p>
-        <div className="flex justify-center gap-6 text-slate-400">
-          <a href="#" className="hover:text-white">Privacy Policy</a>
-          <a href="#" className="hover:text-white">Terms of Service</a>
-          <a href="#" className="hover:text-white">Meta API Compliance</a>
-        </div>
+        <p>
+          OmniFlow — Creator OS. Auto-DM is delivered through the official Meta Graph API and its
+          24-hour messaging window.
+        </p>
       </footer>
     </div>
   );

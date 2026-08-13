@@ -104,6 +104,18 @@ export async function subscribePage(pageId: string, pageToken: string) {
   return true;
 }
 
+export async function unsubscribePage(pageId: string, pageToken: string) {
+  const res = await fetch(
+    `${GRAPH_API}/${pageId}/subscribed_apps?access_token=${encodeURIComponent(pageToken)}`,
+    { method: "DELETE", cache: "no-store" }
+  );
+  const data = await res.json();
+  if (!res.ok || data.success === false) {
+    throw new Error(data.error?.message || "Page unsubscribe failed.");
+  }
+  return true;
+}
+
 export function verifyMetaSignature(rawBody: string, signature: string | null) {
   const secret = process.env.META_APP_SECRET;
   if (!secret) return false;
@@ -169,6 +181,47 @@ export function withinMessagingWindow(createdTimeSeconds?: number) {
   return Date.now() - createdTimeSeconds * 1000 < 24 * 3600 * 1000;
 }
 
+const WORD_CHAR = /[\p{L}\p{N}_]/u;
+
+/**
+ * Case-insensitive whole-token match. Keywords are stored uppercased but a
+ * comment is matched on token boundaries so `KIT` does not fire on `KITCHEN`,
+ * while hashtag keywords such as `#KIT` still match mid-sentence. Keyword text
+ * is compared literally, never compiled into a regular expression.
+ */
+export function matchesKeyword(comment: string, keyword: string) {
+  const needle = keyword.trim().toLocaleUpperCase();
+  if (!needle) return false;
+
+  const haystack = comment.toLocaleUpperCase();
+  let from = 0;
+
+  for (;;) {
+    const at = haystack.indexOf(needle, from);
+    if (at === -1) return false;
+
+    const before = at > 0 ? haystack[at - 1] : "";
+    const after = haystack[at + needle.length] ?? "";
+    const startsWithWord = WORD_CHAR.test(needle[0]);
+    const endsWithWord = WORD_CHAR.test(needle[needle.length - 1]);
+
+    const leftOk = !startsWithWord || !before || !WORD_CHAR.test(before);
+    const rightOk = !endsWithWord || !after || !WORD_CHAR.test(after);
+    if (leftOk && rightOk) return true;
+
+    from = at + 1;
+  }
+}
+
+/** Longest keyword wins so a specific rule beats a generic one. */
+export function resolveRule<T extends { keyword: string }>(comment: string, rules: T[]) {
+  return (
+    [...rules]
+      .sort((a, b) => b.keyword.length - a.keyword.length)
+      .find((rule) => matchesKeyword(comment, rule.keyword)) ?? null
+  );
+}
+
 async function sendPrivateReply(commentId: string, pageToken: string, message: string) {
   const res = await fetch(`${GRAPH_API}/${commentId}/private_replies`, {
     method: "POST",
@@ -193,6 +246,14 @@ export async function processComment(comment: IncomingComment) {
   });
   if (!account) return { status: "no_account" as const };
 
+  // Never reply to the page's own comments, which would loop.
+  if (
+    comment.fromId &&
+    (comment.fromId === account.pageId || comment.fromId === account.igUserId)
+  ) {
+    return { status: "self_comment" as const };
+  }
+
   const started = Date.now();
 
   await prisma.funnelEvent.create({
@@ -204,15 +265,20 @@ export async function processComment(comment: IncomingComment) {
   });
 
   const rules = await prisma.autoDMRule.findMany({
-    where: { userId: account.userId, active: true, platform: comment.platform },
+    where: {
+      userId: account.userId,
+      active: true,
+      platform: comment.platform,
+      // A rule pinned to one page must not fire for another page.
+      OR: [{ metaAccountId: null }, { metaAccountId: account.id }],
+    },
     include: { targetProduct: true },
     orderBy: { createdAt: "desc" },
   });
 
-  const matched = rules.find((rule) =>
-    comment.text.toUpperCase().includes(rule.keyword.toUpperCase())
-  );
+  const matched = resolveRule(comment.text, rules);
   if (!matched) return { status: "no_match" as const };
+  if (!matched.targetProduct.active) return { status: "product_inactive" as const };
 
   const plan = planOf(account.user.plan);
   const sentThisMonth = await prisma.dmLog.count({

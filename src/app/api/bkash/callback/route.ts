@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { creatorBkash, executeBkashPayment } from "@/lib/bkash";
 import { fulfillOrder } from "@/lib/fulfillment";
-import { appUrl } from "@/lib/utils";
+import { appUrl, toCents } from "@/lib/utils";
+import { safeEqual } from "@/lib/crypto";
 
 export async function GET(req: NextRequest) {
   const orderId = req.nextUrl.searchParams.get("orderId");
@@ -19,17 +20,47 @@ export async function GET(req: NextRequest) {
 
   const store = `${appUrl()}/${order.user.username}`;
 
-  if (status !== "success" || !paymentId) {
-    await prisma.order.update({ where: { id: order.id }, data: { status: "FAILED" } });
+  if (order.status === "PAID") {
+    return NextResponse.redirect(`${store}?order=${order.id}`);
+  }
+  // Every query parameter here is attacker-controllable, so nothing is trusted
+  // beyond identifying the order: the payment id must be the one this order
+  // created, and the outcome comes from bKash itself.
+  if (order.status !== "PENDING" || order.gateway !== "bKash" || !order.gatewayRef) {
+    return NextResponse.redirect(`${store}?checkout=error`);
+  }
+  if (!paymentId || !safeEqual(paymentId, order.gatewayRef)) {
+    return NextResponse.redirect(`${store}?checkout=error`);
+  }
+
+  if (status !== "success") {
+    await prisma.order.updateMany({
+      where: { id: order.id, status: "PENDING" },
+      data: { status: "FAILED" },
+    });
     return NextResponse.redirect(`${store}?checkout=cancel`);
   }
 
   const creds = creatorBkash(order.user);
   if (!creds) return NextResponse.redirect(`${store}?checkout=error`);
 
-  const result = await executeBkashPayment(creds, paymentId);
-  if (!result.completed) {
-    await prisma.order.update({ where: { id: order.id }, data: { status: "FAILED" } });
+  let result: Awaited<ReturnType<typeof executeBkashPayment>>;
+  try {
+    result = await executeBkashPayment(creds, order.gatewayRef);
+  } catch {
+    return NextResponse.redirect(`${store}?checkout=error`);
+  }
+
+  const amountMatches =
+    result.amount !== undefined &&
+    toCents(Number(result.amount)) === order.amountCents &&
+    (result.currency ?? "BDT").toUpperCase() === order.currency;
+
+  if (!result.completed || !amountMatches) {
+    await prisma.order.updateMany({
+      where: { id: order.id, status: "PENDING" },
+      data: { status: "FAILED" },
+    });
     return NextResponse.redirect(`${store}?checkout=cancel`);
   }
 

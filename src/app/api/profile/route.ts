@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser, slugifyHandle } from "@/lib/utils";
+import { getCurrentUser, ownsAssetUrl, slugifyHandle } from "@/lib/utils";
 import { planOf, trialDaysLeft } from "@/lib/plans";
 
 const schema = z.object({
@@ -52,12 +52,19 @@ export async function PATCH(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const parsed = schema.safeParse(await req.json());
+  const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid profile data." }, { status: 400 });
   }
 
   const data = { ...parsed.data };
+
+  for (const field of ["avatar", "cover"] as const) {
+    const value = data[field];
+    if (value && !(await ownsAssetUrl(user.id, value))) {
+      return NextResponse.json({ error: `Upload your ${field} image again.` }, { status: 403 });
+    }
+  }
 
   if (data.username !== undefined) {
     const username = slugifyHandle(data.username);

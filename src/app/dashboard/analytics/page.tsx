@@ -2,20 +2,37 @@
 
 import { useEffect, useState } from "react";
 import { Analytics } from "@/lib/types";
-import { formatMoney, relativeTime } from "@/lib/format";
+import { formatRevenue, relativeTime } from "@/lib/format";
 
 const RANGES = [7, 30, 90];
 
 export default function AnalyticsPage() {
   const [days, setDays] = useState(30);
   const [stats, setStats] = useState<Analytics | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
+    let active = true;
+    setError("");
+
     fetch(`/api/analytics?days=${days}`)
-      .then((r) => r.json())
-      .then((data) => (data.error ? null : setStats(data)));
+      .then(async (res) => {
+        const data = await res.json();
+        if (!active) return;
+        if (!res.ok) {
+          setError(data.error || "Could not load analytics.");
+          return;
+        }
+        setStats(data);
+      })
+      .catch(() => active && setError("Could not reach the analytics service."));
+
+    return () => {
+      active = false;
+    };
   }, [days]);
 
+  if (error) return <p className="text-xs text-red-400">{error}</p>;
   if (!stats) return <p className="text-xs text-slate-400">Loading analytics...</p>;
 
   const funnel = [
@@ -66,7 +83,7 @@ export default function AnalyticsPage() {
         </div>
 
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <Stat label="Revenue" value={formatMoney(stats.revenueCents)} tone="text-emerald-400" />
+          <Stat label="Revenue" value={formatRevenue(stats.revenue)} tone="text-emerald-400" />
           <Stat
             label="Avg DM latency"
             value={stats.avgDmLatencyMs ? `${(stats.avgDmLatencyMs / 1000).toFixed(2)}s` : "—"}
@@ -125,7 +142,9 @@ export default function AnalyticsPage() {
                   <span className="text-[10px] uppercase text-slate-500">{dm.platform}</span>
                 </span>
                 <span className="flex items-center gap-3">
-                  {dm.latencyMs && <span className="text-[10px] text-slate-500">{dm.latencyMs}ms</span>}
+                  {dm.latencyMs !== null && (
+                    <span className="text-[10px] text-slate-500">{dm.latencyMs}ms</span>
+                  )}
                   <span
                     className={`rounded px-2 py-0.5 text-[10px] font-bold ${
                       dm.status === "sent"

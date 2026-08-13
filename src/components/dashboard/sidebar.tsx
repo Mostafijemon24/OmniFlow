@@ -21,12 +21,21 @@ export function DashboardSidebar() {
   const [orderCount, setOrderCount] = useState<number | null>(null);
 
   useEffect(() => {
+    let active = true;
+
     fetch("/api/profile")
       .then((r) => r.json())
-      .then((data) => (data.error ? null : setProfile(data)));
+      .then((data) => active && !data.error && setProfile(data))
+      .catch(() => undefined);
+
     fetch("/api/orders")
       .then((r) => r.json())
-      .then((data) => setOrderCount(Array.isArray(data.orders) ? data.orders.length : 0));
+      .then((data) => active && setOrderCount(typeof data.total === "number" ? data.total : null))
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
   }, [pathname]);
 
   const avatar = profile?.avatar || initialsAvatar(profile?.fullName || "OmniFlow");

@@ -65,16 +65,24 @@ export default function AutoDmPage() {
   }
 
   async function toggleRule(rule: AutoRule) {
-    await fetch(`/api/auto-dm/${rule.id}`, {
+    const res = await fetch(`/api/auto-dm/${rule.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ active: !rule.active }),
     });
+    if (!res.ok) {
+      triggerToast(`Could not ${rule.active ? "pause" : "resume"} ${rule.keyword}.`);
+      return;
+    }
     load();
   }
 
   async function deleteRule(rule: AutoRule) {
-    await fetch(`/api/auto-dm/${rule.id}`, { method: "DELETE" });
+    const res = await fetch(`/api/auto-dm/${rule.id}`, { method: "DELETE" });
+    if (!res.ok) {
+      triggerToast(`Could not remove ${rule.keyword}.`);
+      return;
+    }
     triggerToast(`Rule ${rule.keyword} removed.`);
     load();
   }
@@ -85,8 +93,12 @@ export default function AutoDmPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ comment }),
-    });
-    const data = await res.json();
+    }).catch(() => null);
+    const data = res ? await res.json().catch(() => null) : null;
+    if (!res?.ok || !data) {
+      triggerToast(data?.error || "The matcher could not be reached.");
+      return;
+    }
     setComment("");
     if (!data.matched) {
       setSim(null);

@@ -3,6 +3,9 @@ import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
 import { platformStripe } from "@/lib/stripe";
 import { fulfillOrder } from "@/lib/fulfillment";
+import { PLANS, PlanId } from "@/lib/plans";
+
+export const runtime = "nodejs";
 
 /** Platform webhook: OmniFlow subscription lifecycle + optional store fulfilment. */
 export async function POST(req: Request) {
@@ -31,6 +34,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ received: true, duplicate: true });
   }
 
+  try {
+    await handle(event);
+  } catch (error) {
+    // Drop the dedupe row so Stripe's retry gets a real second attempt.
+    await prisma.webhookEvent
+      .delete({ where: { provider_eventId: { provider: "stripe", eventId: event.id } } })
+      .catch(() => undefined);
+    console.error("stripe webhook", event.type, error);
+    return NextResponse.json({ error: "Webhook handling failed." }, { status: 500 });
+  }
+
+  return NextResponse.json({ received: true });
+}
+
+async function handle(event: Stripe.Event) {
   switch (event.type) {
     case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session;
@@ -39,14 +57,22 @@ export async function POST(req: Request) {
       const plan = session.metadata?.plan;
 
       if (orderId && session.payment_status === "paid") {
-        await fulfillOrder(orderId).catch((e) => console.error("fulfill", e));
+        const order = await prisma.order.findUnique({ where: { id: orderId } });
+        if (
+          order &&
+          order.gatewayRef === session.id &&
+          session.amount_total === order.amountCents &&
+          session.currency?.toUpperCase() === order.currency
+        ) {
+          await fulfillOrder(order.id);
+        }
       }
 
-      if (userId && plan && session.subscription) {
+      if (userId && plan && plan in PLANS && session.subscription) {
         await prisma.user.update({
           where: { id: userId },
           data: {
-            plan,
+            plan: plan as PlanId,
             planStatus: "active",
             stripeCustomerId: String(session.customer ?? ""),
             stripeSubscriptionId: String(session.subscription),
@@ -63,11 +89,12 @@ export async function POST(req: Request) {
         where: { stripeSubscriptionId: sub.id },
       });
       if (user) {
+        const ended = sub.status === "canceled" || event.type === "customer.subscription.deleted";
         await prisma.user.update({
           where: { id: user.id },
           data: {
-            planStatus: sub.status === "active" ? "active" : sub.status,
-            ...(sub.status === "canceled" ? { plan: "starter" } : {}),
+            planStatus: ended ? "canceled" : sub.status,
+            ...(ended ? { plan: "starter" } : {}),
           },
         });
       }
@@ -77,6 +104,4 @@ export async function POST(req: Request) {
     default:
       break;
   }
-
-  return NextResponse.json({ received: true });
 }

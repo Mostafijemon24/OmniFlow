@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser, appUrl } from "@/lib/utils";
 import { deliveryEmailHtml, sendEmail } from "@/lib/email";
+import { downloadExpiry } from "@/lib/fulfillment";
 
 export async function POST(_req: Request, { params }: { params: { id: string } }) {
   const user = await getCurrentUser();
@@ -16,6 +17,16 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
     return NextResponse.json({ error: "Only paid orders can be delivered." }, { status: 409 });
   }
 
+  // The same token row is reused so a re-send can never mint extra download
+  // capacity; only its expiry window is renewed.
+  let token = order.downloadToken;
+  if (token && token.expiresAt.getTime() < Date.now()) {
+    token = await prisma.downloadToken.update({
+      where: { id: token.id },
+      data: { expiresAt: downloadExpiry() },
+    });
+  }
+
   const result = await sendEmail({
     to: order.customerEmail,
     subject: `Your ${order.product.title} is ready`,
@@ -23,14 +34,16 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
       customerName: order.customerName,
       productTitle: order.product.title,
       creatorName: order.user.fullName,
-      downloadUrl: order.downloadToken
-        ? `${appUrl()}/api/download/${order.downloadToken.token}`
-        : undefined,
-      expiresAt: order.downloadToken?.expiresAt,
+      downloadUrl: token ? `${appUrl()}/api/download/${token.token}` : undefined,
+      expiresAt: token?.expiresAt,
       meetingLink: order.booking?.meetingLink ?? undefined,
       startsAt: order.booking?.startsAt ?? null,
     }),
-  });
+  }).catch((error) => ({
+    ok: false as const,
+    status: "failed" as const,
+    detail: error instanceof Error ? error.message.slice(0, 500) : "Email transport error.",
+  }));
 
   await prisma.deliveryLog.create({
     data: {

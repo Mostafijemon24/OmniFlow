@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/utils";
+import { getCurrentUser, ownsAssetUrl, ownsUpload } from "@/lib/utils";
 import { planOf } from "@/lib/plans";
 
 const schema = z
@@ -45,7 +45,7 @@ export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const parsed = schema.safeParse(await req.json());
+  const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(
       { error: parsed.error.issues[0]?.message || "Invalid product data." },
@@ -63,6 +63,14 @@ export async function POST(req: Request) {
   }
 
   const d = parsed.data;
+
+  // A creator may only attach files and images that they uploaded themselves.
+  if (d.type === "digital_file" && !(await ownsUpload(user.id, d.fileKey!, "private"))) {
+    return NextResponse.json({ error: "That deliverable is not yours." }, { status: 403 });
+  }
+  if (d.thumbnail && !(await ownsAssetUrl(user.id, d.thumbnail))) {
+    return NextResponse.json({ error: "Upload the cover image again." }, { status: 403 });
+  }
   const product = await prisma.product.create({
     data: {
       userId: user.id,

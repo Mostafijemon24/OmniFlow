@@ -15,9 +15,13 @@ const schema = z.object({
   slotId: z.string().optional(),
 });
 
+/** Stripe has no BDT presentment currency, so ৳ products must go through bKash. */
+const STRIPE_CURRENCIES = ["USD", "EUR", "GBP"];
+
 export async function POST(req: Request) {
   try {
-    const parsed = schema.safeParse(await req.json());
+    const body = await req.json().catch(() => null);
+    const parsed = schema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: parsed.error.issues[0]?.message || "Invalid checkout data." },
@@ -45,8 +49,55 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "That slot is no longer available." }, { status: 409 });
       }
     }
+    if (product.type === "digital_file" && !product.fileKey) {
+      return NextResponse.json(
+        { error: "This product has no deliverable attached yet." },
+        { status: 409 }
+      );
+    }
 
+    // The price always comes from the database. The gateway is validated before
+    // an order row exists so unconfigured creators do not accumulate dead
+    // orders in their CRM.
     const currency = currencyToCode(product.currency);
+    const amountCents = toCents(product.price);
+    const paid = amountCents > 0;
+
+    let stripe: ReturnType<typeof creatorStripe> = null;
+    let bkashCreds: ReturnType<typeof creatorBkash> = null;
+
+    if (paid && d.gateway === "Stripe") {
+      stripe = creatorStripe(product.user.stripeSecretKey);
+      if (!stripe) {
+        return NextResponse.json(
+          { error: "This creator has not connected Stripe yet." },
+          { status: 409 }
+        );
+      }
+      if (!STRIPE_CURRENCIES.includes(currency)) {
+        return NextResponse.json(
+          { error: `Stripe cannot charge ${currency}. Please pay this product with bKash.` },
+          { status: 409 }
+        );
+      }
+    }
+
+    if (paid && d.gateway === "bKash") {
+      bkashCreds = creatorBkash(product.user);
+      if (!bkashCreds) {
+        return NextResponse.json(
+          { error: "This creator has not connected bKash yet." },
+          { status: 409 }
+        );
+      }
+      if (currency !== "BDT") {
+        return NextResponse.json(
+          { error: "bKash only supports BDT (৳) priced products." },
+          { status: 409 }
+        );
+      }
+    }
+
     const order = await prisma.order.create({
       data: {
         userId: product.userId,
@@ -54,31 +105,22 @@ export async function POST(req: Request) {
         customerName: d.customerName,
         customerEmail: d.customerEmail.toLowerCase(),
         customerPhone: d.customerPhone || null,
-        amountCents: toCents(product.price),
+        amountCents,
         currency,
         pricePaid: `${product.currency}${product.price}`,
-        gateway: product.price === 0 ? "Free" : d.gateway,
+        gateway: paid ? d.gateway : "Free",
         status: "PENDING",
         slotId: product.type === "consultation" ? d.slotId : null,
       },
     });
 
     // Free products need no gateway round-trip.
-    if (product.price === 0) {
+    if (!paid) {
       const { downloadUrl, meetingLink } = await fulfillOrder(order.id);
       return NextResponse.json({ mode: "complete", orderId: order.id, downloadUrl, meetingLink });
     }
 
-    if (d.gateway === "Stripe") {
-      const stripe = creatorStripe(product.user.stripeSecretKey);
-      if (!stripe) {
-        await prisma.order.update({ where: { id: order.id }, data: { status: "FAILED" } });
-        return NextResponse.json(
-          { error: "This creator has not connected Stripe yet." },
-          { status: 409 }
-        );
-      }
-
+    if (stripe) {
       const session = await stripe.checkout.sessions.create({
         mode: "payment",
         customer_email: order.customerEmail,
@@ -87,8 +129,11 @@ export async function POST(req: Request) {
             quantity: 1,
             price_data: {
               currency: currency.toLowerCase(),
-              unit_amount: order.amountCents,
-              product_data: { name: product.title, description: product.description.slice(0, 300) },
+              unit_amount: amountCents,
+              product_data: {
+                name: product.title,
+                description: product.description.slice(0, 300),
+              },
             },
           },
         ],
@@ -105,24 +150,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ mode: "redirect", url: session.url, orderId: order.id });
     }
 
-    const creds = creatorBkash(product.user);
-    if (!creds) {
-      await prisma.order.update({ where: { id: order.id }, data: { status: "FAILED" } });
-      return NextResponse.json(
-        { error: "This creator has not connected bKash yet." },
-        { status: 409 }
-      );
-    }
-    if (currency !== "BDT") {
-      await prisma.order.update({ where: { id: order.id }, data: { status: "FAILED" } });
-      return NextResponse.json(
-        { error: "bKash only supports BDT (৳) priced products." },
-        { status: 409 }
-      );
-    }
-
-    const payment = await createBkashPayment(creds, {
-      amount: product.price.toFixed(2),
+    const payment = await createBkashPayment(bkashCreds!, {
+      amount: (amountCents / 100).toFixed(2),
       invoice: order.id,
       callbackUrl: `${appUrl()}/api/bkash/callback?orderId=${order.id}`,
       payerReference: d.customerPhone || order.customerEmail,
@@ -136,9 +165,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ mode: "redirect", url: payment.redirectUrl, orderId: order.id });
   } catch (error) {
     console.error("checkout", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Checkout failed." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Checkout failed. Please try again." }, { status: 500 });
   }
 }

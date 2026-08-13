@@ -57,7 +57,11 @@ export default function IntegrationsPage() {
   }
 
   async function disconnect(account: MetaAccount) {
-    await fetch(`/api/meta/accounts/${account.id}`, { method: "DELETE" });
+    const res = await fetch(`/api/meta/accounts/${account.id}`, { method: "DELETE" });
+    if (!res.ok) {
+      triggerToast(`${account.pageName} could not be disconnected.`);
+      return;
+    }
     triggerToast(`${account.pageName} disconnected.`);
     load();
   }

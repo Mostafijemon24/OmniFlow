@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
+import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { authOptions } from "@/lib/auth";
 import { PublicStore } from "@/components/store/public-store";
 import { Product } from "@/lib/types";
 
@@ -35,9 +37,13 @@ export default async function PublicBioPage({ params }: { params: { username: st
   });
   if (!user) notFound();
 
-  await prisma.funnelEvent.create({
-    data: { userId: user.id, type: "bio_visit", metadata: params.username },
-  });
+  // A creator previewing their own storefront is not a visit.
+  const session = await getServerSession(authOptions);
+  if (session?.user?.id !== user.id) {
+    await prisma.funnelEvent.create({
+      data: { userId: user.id, type: "bio_visit", metadata: params.username },
+    });
+  }
 
   const products: Product[] = user.products.map((p) => ({
     id: p.id,

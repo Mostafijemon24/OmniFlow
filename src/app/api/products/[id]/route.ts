@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/utils";
+import { getCurrentUser, ownsAssetUrl, ownsUpload } from "@/lib/utils";
 import { deleteFile } from "@/lib/storage";
 
 const schema = z.object({
@@ -24,7 +24,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const parsed = schema.safeParse(await req.json());
+  const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(
       { error: parsed.error.issues[0]?.message || "Invalid product data." },
@@ -37,17 +37,34 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   });
   if (!existing) return NextResponse.json({ error: "Product not found." }, { status: 404 });
 
-  if (parsed.data.fileKey && existing.fileKey && parsed.data.fileKey !== existing.fileKey) {
-    await deleteFile("private", existing.fileKey).catch(() => undefined);
+  const d = parsed.data;
+
+  if (d.fileKey && d.fileKey !== existing.fileKey) {
+    if (!(await ownsUpload(user.id, d.fileKey, "private"))) {
+      return NextResponse.json({ error: "That deliverable is not yours." }, { status: 403 });
+    }
+    if (existing.fileKey) {
+      await deleteFile("private", existing.fileKey).catch(() => undefined);
+      await prisma.upload.deleteMany({ where: { key: existing.fileKey, userId: user.id } });
+    }
+  }
+  if (d.thumbnail && !(await ownsAssetUrl(user.id, d.thumbnail))) {
+    return NextResponse.json({ error: "Upload the cover image again." }, { status: 403 });
+  }
+  if (existing.type === "consultation" && d.meetingLink === "") {
+    return NextResponse.json(
+      { error: "Consultations need a meeting link (Zoom, Meet, etc.)." },
+      { status: 400 }
+    );
   }
 
   const updated = await prisma.product.update({
     where: { id: params.id },
     data: {
-      ...parsed.data,
-      badge: parsed.data.badge === "" ? null : parsed.data.badge,
-      thumbnail: parsed.data.thumbnail === "" ? null : parsed.data.thumbnail,
-      meetingLink: parsed.data.meetingLink === "" ? null : parsed.data.meetingLink,
+      ...d,
+      badge: d.badge === "" ? null : d.badge,
+      thumbnail: d.thumbnail === "" ? null : d.thumbnail,
+      meetingLink: d.meetingLink === "" ? null : d.meetingLink,
     },
     include: { slots: { orderBy: { startsAt: "asc" } } },
   });
@@ -77,7 +94,10 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
     });
   }
 
-  if (existing.fileKey) await deleteFile("private", existing.fileKey).catch(() => undefined);
+  if (existing.fileKey) {
+    await deleteFile("private", existing.fileKey).catch(() => undefined);
+    await prisma.upload.deleteMany({ where: { key: existing.fileKey, userId: user.id } });
+  }
   await prisma.product.delete({ where: { id: params.id } });
 
   return NextResponse.json({ deleted: true });

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { extractComments, processComment, verifyMetaSignature } from "@/lib/meta";
+import { safeEqual } from "@/lib/crypto";
+
+export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   const mode = req.nextUrl.searchParams.get("hub.mode");
@@ -11,8 +14,11 @@ export async function GET(req: NextRequest) {
   if (!verifyToken) {
     return NextResponse.json({ error: "META_VERIFY_TOKEN is not configured." }, { status: 500 });
   }
-  if (mode === "subscribe" && token === verifyToken && challenge) {
-    return new NextResponse(challenge, { status: 200 });
+  if (mode === "subscribe" && token && challenge && safeEqual(token, verifyToken)) {
+    return new NextResponse(challenge, {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
+    });
   }
   return NextResponse.json({ error: "Verification failed." }, { status: 403 });
 }
@@ -45,8 +51,17 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const outcome = await processComment(comment);
-    results.push(outcome.status);
+    try {
+      const outcome = await processComment(comment);
+      results.push(outcome.status);
+    } catch (error) {
+      // Release the dedupe claim so Meta's retry can be processed properly.
+      await prisma.webhookEvent
+        .delete({ where: { provider_eventId: { provider: "meta", eventId: comment.commentId } } })
+        .catch(() => undefined);
+      console.error("meta webhook", error);
+      results.push("error");
+    }
   }
 
   return NextResponse.json({ received: true, processed: results.length, results });

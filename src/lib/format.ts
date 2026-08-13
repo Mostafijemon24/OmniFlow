@@ -10,6 +10,15 @@ export function formatMoney(cents: number, currency = "USD") {
   }
 }
 
+/**
+ * Revenue arrives grouped by currency because gateway currencies must never be
+ * added together. An empty list means no paid orders yet.
+ */
+export function formatRevenue(rows: Array<{ currency: string; cents: number }> | undefined) {
+  if (!rows?.length) return formatMoney(0);
+  return rows.map((row) => formatMoney(row.cents, row.currency)).join(" · ");
+}
+
 export function formatDateTime(value: string | Date | null | undefined) {
   if (!value) return "—";
   const date = typeof value === "string" ? new Date(value) : value;

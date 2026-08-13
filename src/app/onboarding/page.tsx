@@ -36,15 +36,19 @@ export default function OnboardingPage() {
   const [primaryGoal, setPrimaryGoal] = useState("");
   const [username, setUsername] = useState("");
   const [saving, setSaving] = useState(false);
+  const [origin, setOrigin] = useState("");
 
   useEffect(() => {
+    setOrigin(window.location.origin.replace(/^https?:\/\//, ""));
+
     fetch("/api/profile")
       .then((r) => r.json())
       .then((data) => {
         if (data.username) setUsername(data.username);
         if (data.onboardingCompleted) router.replace("/dashboard");
-      });
-  }, [router]);
+      })
+      .catch(() => triggerToast("Could not load your profile. Please refresh."));
+  }, [router, triggerToast]);
 
   async function finish() {
     setSaving(true);
@@ -157,12 +161,15 @@ export default function OnboardingPage() {
 
         {step === 3 && (
           <div className="space-y-4">
-            <h3 className="text-sm font-bold text-slate-200">Claim your custom bio-store URL handle</h3>
+            <h3 className="text-sm font-bold text-slate-200">Claim your bio-store handle</h3>
             <div>
-              <label className="mb-1 block text-xs text-slate-400">Custom Subdomain Link</label>
+              <label htmlFor="handle" className="mb-1 block text-xs text-slate-400">
+                Your storefront address
+              </label>
               <div className="flex items-center rounded-xl border border-slate-800 bg-dark-900 px-3 py-2.5 text-xs">
-                <span className="font-bold text-slate-500">omniflow.bio/</span>
+                <span className="font-bold text-slate-500">{origin}/</span>
                 <input
+                  id="handle"
                   type="text"
                   placeholder="yourhandle"
                   value={username}

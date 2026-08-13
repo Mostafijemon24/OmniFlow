@@ -1,26 +1,45 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { OrderRow } from "@/lib/types";
-import { formatDateTime, formatMoney, relativeTime } from "@/lib/format";
+import { CurrencyTotal, OrderRow } from "@/lib/types";
+import { formatDateTime, formatRevenue, relativeTime } from "@/lib/format";
 import { useUi } from "@/components/providers/ui-provider";
 
-const STATUSES = ["ALL", "PAID", "PENDING", "FAILED"];
+const STATUSES = ["ALL", "PAID", "PENDING", "FAILED", "REFUNDED"];
 
 export default function OrdersPage() {
   const { triggerToast } = useUi();
   const [orders, setOrders] = useState<OrderRow[]>([]);
-  const [revenueCents, setRevenueCents] = useState(0);
+  const [revenue, setRevenue] = useState<CurrencyTotal[]>([]);
+  const [total, setTotal] = useState(0);
+  const [truncated, setTruncated] = useState(false);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("ALL");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const params = new URLSearchParams({ status });
     if (q) params.set("q", q);
-    const data = await fetch(`/api/orders?${params}`).then((r) => r.json());
-    setOrders(data.orders || []);
-    setRevenueCents(data.revenueCents || 0);
+
+    try {
+      const res = await fetch(`/api/orders?${params}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Could not load orders.");
+        return;
+      }
+      setError("");
+      setOrders(data.orders ?? []);
+      setRevenue(data.revenue ?? []);
+      setTotal(data.total ?? 0);
+      setTruncated(Boolean(data.truncated));
+    } catch {
+      setError("Could not reach the orders service.");
+    } finally {
+      setLoading(false);
+    }
   }, [q, status]);
 
   useEffect(() => {
@@ -33,7 +52,9 @@ export default function OrdersPage() {
     const res = await fetch(`/api/orders/${order.id}/resend`, { method: "POST" });
     const data = await res.json();
     setBusy(null);
-    triggerToast(res.ok ? `Delivery email re-sent to ${order.customerEmail}` : data.error);
+    triggerToast(
+      res.ok ? `Delivery email re-sent to ${order.customerEmail}` : data.error || "Re-send failed."
+    );
     load();
   }
 
@@ -42,11 +63,11 @@ export default function OrdersPage() {
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
         <div className="glass-card rounded-2xl border border-slate-800 p-4">
           <span className="block text-[10px] font-bold uppercase text-slate-500">Paid revenue</span>
-          <span className="text-2xl font-black text-emerald-400">{formatMoney(revenueCents)}</span>
+          <span className="text-2xl font-black text-emerald-400">{formatRevenue(revenue)}</span>
         </div>
         <div className="glass-card rounded-2xl border border-slate-800 p-4">
           <span className="block text-[10px] font-bold uppercase text-slate-500">Orders</span>
-          <span className="text-2xl font-black text-white">{orders.length}</span>
+          <span className="text-2xl font-black text-white">{total}</span>
         </div>
         <div className="glass-card rounded-2xl border border-slate-800 p-4">
           <span className="block text-[10px] font-bold uppercase text-slate-500">Delivered</span>
@@ -80,7 +101,11 @@ export default function OrdersPage() {
           </div>
         </div>
 
-        {orders.length === 0 ? (
+        {error ? (
+          <p className="py-8 text-center text-xs text-red-400">{error}</p>
+        ) : loading ? (
+          <p className="py-8 text-center text-xs text-slate-400">Loading orders...</p>
+        ) : orders.length === 0 ? (
           <p className="py-8 text-center text-xs text-slate-400">
             No orders match this view yet.
           </p>
@@ -152,7 +177,7 @@ export default function OrdersPage() {
                           <a
                             href={o.downloadUrl}
                             className="text-slate-400 hover:text-brand-400"
-                            title="Open buyer download link"
+                            title={`Buyer download link · ${o.downloadsLeft ?? 0} left · expires ${formatDateTime(o.downloadExpiresAt)}`}
                           >
                             <i className="fa-solid fa-link" />
                           </a>
@@ -173,6 +198,11 @@ export default function OrdersPage() {
                 ))}
               </tbody>
             </table>
+            {truncated && (
+              <p className="pt-3 text-center text-[10px] text-slate-500">
+                Showing the {orders.length} most recent of {total} matching orders.
+              </p>
+            )}
           </div>
         )}
       </div>

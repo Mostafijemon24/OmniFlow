@@ -109,6 +109,13 @@ export async function executeBkashPayment(creds: BkashCredentials, paymentId: st
   });
 
   const data = await res.json();
-  const completed = data.transactionStatus === "Completed" || data.statusCode === "0000";
-  return { completed, trxId: data.trxID as string | undefined, raw: data };
+
+  return {
+    completed: res.ok && data.transactionStatus === "Completed",
+    trxId: data.trxID as string | undefined,
+    paymentId: data.paymentID as string | undefined,
+    amount: data.amount as string | undefined,
+    currency: data.currency as string | undefined,
+    message: (data.statusMessage as string | undefined) ?? null,
+  };
 }
