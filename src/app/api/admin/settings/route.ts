@@ -7,7 +7,7 @@ import { stripeClient } from "@/lib/stripe";
 import { getPlatformSettings, savePlatformSettings } from "@/lib/platform-settings";
 import { isEmailConfigured } from "@/lib/email";
 import { appUrl } from "@/lib/utils";
-import { isStripePriceId, normalizeStripePriceId, parseRate } from "@/lib/digits";
+import { isStripePriceId, normalizeStripePriceId } from "@/lib/digits";
 
 /** "" clears a stored value; omitting the field leaves it untouched. */
 const secret = z.string().max(400).optional();
@@ -24,10 +24,7 @@ const schema = z.object({
   bkashEnabled: z.boolean().optional(),
   bkashNumber: z.string().max(40).optional(),
   bkashInstructions: z.string().max(1200).optional(),
-  bkashUsdRate: z.preprocess(
-    (value) => (typeof value === "string" ? parseRate(value) : value),
-    z.number().min(0).max(100000).optional()
-  ),
+  bkashUsdRate: z.coerce.number().min(0).max(100000).optional(),
 
   metaEnabled: z.boolean().optional(),
   metaAppId: z.string().max(120).optional(),
@@ -39,14 +36,8 @@ const schema = z.object({
     .optional(),
 });
 
-export async function GET() {
-  const guard = await requireSuperAdmin();
-  if (!guard.ok) return guard.response;
-
-  const s = await getPlatformSettings();
-  const connectedPages = await prisma.metaAccount.count();
-
-  return NextResponse.json({
+function publicSettings(s: Awaited<ReturnType<typeof getPlatformSettings>>, connectedPages: number) {
+  return {
     stripe: {
       enabled: s?.stripeEnabled ?? false,
       secretKeySet: Boolean(s?.stripeSecretKey),
@@ -59,7 +50,7 @@ export async function GET() {
       enabled: s?.bkashEnabled ?? false,
       number: s?.bkashNumber ?? "",
       instructions: s?.bkashInstructions ?? "",
-      usdRate: s?.bkashUsdRate ?? null,
+      usdRate: s?.bkashUsdRate == null ? null : Number(s.bkashUsdRate),
     },
     meta: {
       enabled: s?.metaEnabled ?? false,
@@ -77,7 +68,16 @@ export async function GET() {
       stripeWebhook: `${appUrl()}/api/webhooks/stripe`,
     },
     storePaymentsEnabled: s?.storePaymentsEnabled ?? false,
-  });
+  };
+}
+
+export async function GET() {
+  const guard = await requireSuperAdmin();
+  if (!guard.ok) return guard.response;
+
+  const s = await getPlatformSettings();
+  const connectedPages = await prisma.metaAccount.count();
+  return NextResponse.json(publicSettings(s, connectedPages));
 }
 
 export async function PUT(req: Request) {
@@ -136,12 +136,13 @@ export async function PUT(req: Request) {
     data[field] = id || null;
   }
 
+  if (d.bkashNumber !== undefined) data.bkashNumber = d.bkashNumber.trim();
+  if (d.bkashInstructions !== undefined) data.bkashInstructions = d.bkashInstructions.trim();
+  if (d.bkashUsdRate !== undefined) data.bkashUsdRate = Number(d.bkashUsdRate);
+
   for (const field of [
     "stripeEnabled",
     "bkashEnabled",
-    "bkashNumber",
-    "bkashInstructions",
-    "bkashUsdRate",
     "metaEnabled",
     "metaAppId",
     "metaGraphVersion",
@@ -174,5 +175,7 @@ export async function PUT(req: Request) {
     flaggedPages = flagged.count;
   }
 
-  return NextResponse.json({ saved: true, flaggedPages });
+  const connectedPages = await prisma.metaAccount.count();
+  const settings = publicSettings(await getPlatformSettings(), connectedPages);
+  return NextResponse.json({ saved: true, flaggedPages, ...settings });
 }

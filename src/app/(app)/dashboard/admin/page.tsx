@@ -95,10 +95,7 @@ export default function AdminSettingsPage() {
   const [bkash, setBkash] = useState({ number: "", instructions: "", usdRate: "" });
   const [meta, setMeta] = useState({ appId: "", appSecret: "", verifyToken: "", graphVersion: "" });
 
-  const load = useCallback(async () => {
-    const res = await fetch("/api/admin/settings");
-    if (!res.ok) return;
-    const data: Settings = await res.json();
+  const applySettings = useCallback((data: Settings) => {
     setSettings(data);
     setPrices({
       starter: data.stripe.priceStarter,
@@ -108,7 +105,7 @@ export default function AdminSettingsPage() {
     setBkash({
       number: data.bkash.number,
       instructions: data.bkash.instructions,
-      usdRate: data.bkash.usdRate ? String(data.bkash.usdRate) : "",
+      usdRate: data.bkash.usdRate != null && Number(data.bkash.usdRate) > 0 ? String(data.bkash.usdRate) : "",
     });
     setMeta((m) => ({
       ...m,
@@ -118,6 +115,12 @@ export default function AdminSettingsPage() {
       verifyToken: "",
     }));
   }, []);
+
+  const load = useCallback(async () => {
+    const res = await fetch("/api/admin/settings");
+    if (!res.ok) return;
+    applySettings(await res.json());
+  }, [applySettings]);
 
   useEffect(() => {
     load();
@@ -148,21 +151,24 @@ export default function AdminSettingsPage() {
         );
         setStripeKey("");
         setWebhookSecret("");
-        await load();
+        if (data.bkash) applySettings(data as Settings);
+        else await load();
       } catch {
         triggerToast("Could not reach the server.");
       } finally {
         setSaving(false);
       }
     },
-    [load, triggerToast]
+    [applySettings, load, triggerToast]
   );
 
   if (!settings) return null;
 
   const stripeReady = settings.stripe.enabled && settings.stripe.secretKeySet;
   const bkashReady =
-    settings.bkash.enabled && Boolean(settings.bkash.number) && Boolean(settings.bkash.usdRate);
+    settings.bkash.enabled &&
+    Boolean(settings.bkash.number.trim()) &&
+    Number(settings.bkash.usdRate) > 0;
   const metaReady = settings.meta.enabled && Boolean(settings.meta.appId) && settings.meta.appSecretSet;
 
   return (
@@ -181,8 +187,9 @@ export default function AdminSettingsPage() {
         </div>
         {!stripeReady && !bkashReady && (
           <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-[11px] text-amber-300">
-            No payment gateway is live, so creators cannot buy a paid plan yet. Configure and enable
-            Stripe or bKash below.
+            {settings.bkash.number || Number(settings.bkash.usdRate) > 0
+              ? "bKash details are filled, but the gateway is not live yet. Click Save bKash details — that also turns bKash on."
+              : "No payment gateway is live, so creators cannot buy a paid plan yet. Configure and enable Stripe or bKash below."}
           </p>
         )}
         <Link
@@ -356,20 +363,26 @@ export default function AdminSettingsPage() {
           />
         </label>
         <button
-          onClick={() =>
+          onClick={() => {
+            const rate = parseRate(bkash.usdRate);
+            if (!bkash.number.trim() || !(rate > 0)) {
+              triggerToast("Enter a bKash number and a BDT-per-USD rate greater than 0.");
+              return;
+            }
             save(
               {
-                bkashNumber: bkash.number,
+                bkashEnabled: true,
+                bkashNumber: bkash.number.trim(),
                 bkashInstructions: bkash.instructions,
-                bkashUsdRate: parseRate(bkash.usdRate) || 0,
+                bkashUsdRate: rate,
               },
-              "bKash details saved."
-            )
-          }
+              "bKash is on."
+            );
+          }}
           disabled={saving}
           className="rounded-xl bg-brand-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
         >
-          Save bKash details
+          Save &amp; turn bKash on
         </button>
         <p className="text-[10px] text-slate-500">
           Every bKash payment waits in the queue until you verify the transaction ID against your
