@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useUi } from "@/components/providers/ui-provider";
 
@@ -15,7 +15,7 @@ type Options = {
   currentPlan: string;
 };
 
-export default function PlanCheckoutPage() {
+function PlanCheckoutPage() {
   const params = useSearchParams();
   const router = useRouter();
   const { triggerToast } = useUi();
@@ -208,5 +208,13 @@ export default function PlanCheckoutPage() {
 
       {error && <p className="text-xs font-semibold text-red-400">{error}</p>}
     </div>
+  );
+}
+
+export default function CheckoutPage() {
+  return (
+    <Suspense fallback={null}>
+      <PlanCheckoutPage />
+    </Suspense>
   );
 }

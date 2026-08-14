@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ManualPayment, Profile } from "@/lib/types";
 import { useUi } from "@/components/providers/ui-provider";
@@ -13,7 +13,7 @@ const STATUS_STYLE: Record<string, string> = {
   REJECTED: "bg-red-500/20 text-red-400",
 };
 
-export default function BillingPage() {
+function BillingPage() {
   const { triggerToast } = useUi();
   const params = useSearchParams();
   const [profile, setProfile] = useState<Profile | null>(() => {
@@ -151,5 +151,13 @@ export default function BillingPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function BillingRoute() {
+  return (
+    <Suspense fallback={null}>
+      <BillingPage />
+    </Suspense>
   );
 }

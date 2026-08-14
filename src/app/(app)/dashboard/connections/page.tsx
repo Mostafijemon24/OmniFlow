@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { MetaAccount } from "@/lib/types";
 import { useUi } from "@/components/providers/ui-provider";
@@ -10,7 +10,7 @@ type SocialLink = { id: string; provider: string; email: string | null; name: st
 
 type SocialState = { available: boolean; hasPassword: boolean; accounts: SocialLink[] };
 
-export default function ConnectionsPage() {
+function ConnectionsPage() {
   const { triggerToast } = useUi();
   const params = useSearchParams();
   const [configured, setConfigured] = useState(true);
@@ -270,5 +270,13 @@ export default function ConnectionsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function ConnectionsRoute() {
+  return (
+    <Suspense fallback={null}>
+      <ConnectionsPage />
+    </Suspense>
   );
 }
