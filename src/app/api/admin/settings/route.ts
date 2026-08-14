@@ -7,6 +7,7 @@ import { stripeClient } from "@/lib/stripe";
 import { getPlatformSettings, savePlatformSettings } from "@/lib/platform-settings";
 import { isEmailConfigured } from "@/lib/email";
 import { appUrl } from "@/lib/utils";
+import { isStripePriceId, normalizeStripePriceId, parseRate } from "@/lib/digits";
 
 /** "" clears a stored value; omitting the field leaves it untouched. */
 const secret = z.string().max(400).optional();
@@ -17,11 +18,16 @@ const schema = z.object({
   stripePriceStarter: z.string().max(200).optional(),
   stripePricePro: z.string().max(200).optional(),
   stripePriceAgency: z.string().max(200).optional(),
+  stripeWebhookSecret: secret,
+  storePaymentsEnabled: z.boolean().optional(),
 
   bkashEnabled: z.boolean().optional(),
   bkashNumber: z.string().max(40).optional(),
   bkashInstructions: z.string().max(1200).optional(),
-  bkashUsdRate: z.coerce.number().min(0).max(100000).optional(),
+  bkashUsdRate: z.preprocess(
+    (value) => (typeof value === "string" ? parseRate(value) : value),
+    z.number().min(0).max(100000).optional()
+  ),
 
   metaEnabled: z.boolean().optional(),
   metaAppId: z.string().max(120).optional(),
@@ -47,7 +53,7 @@ export async function GET() {
       priceStarter: s?.stripePriceStarter ?? "",
       pricePro: s?.stripePricePro ?? "",
       priceAgency: s?.stripePriceAgency ?? "",
-      webhookSecretSet: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
+      webhookSecretSet: Boolean(process.env.STRIPE_WEBHOOK_SECRET) || Boolean(s?.stripeWebhookSecret),
     },
     bkash: {
       enabled: s?.bkashEnabled ?? false,
@@ -111,12 +117,27 @@ export async function PUT(req: Request) {
   if (d.metaVerifyToken !== undefined) {
     data.metaVerifyToken = d.metaVerifyToken ? encrypt(d.metaVerifyToken) : null;
   }
+  if (d.stripeWebhookSecret !== undefined) {
+    data.stripeWebhookSecret = d.stripeWebhookSecret ? encrypt(d.stripeWebhookSecret) : null;
+  }
+
+  for (const field of ["stripePriceStarter", "stripePricePro", "stripePriceAgency"] as const) {
+    if (d[field] === undefined) continue;
+    const id = normalizeStripePriceId(d[field]);
+    if (id && !isStripePriceId(id)) {
+      return NextResponse.json(
+        {
+          error:
+            "Stripe price IDs start with price_ and come from Stripe Dashboard → Product. Do not enter 12, 26, or ১২.",
+        },
+        { status: 400 }
+      );
+    }
+    data[field] = id || null;
+  }
 
   for (const field of [
     "stripeEnabled",
-    "stripePriceStarter",
-    "stripePricePro",
-    "stripePriceAgency",
     "bkashEnabled",
     "bkashNumber",
     "bkashInstructions",
@@ -124,6 +145,7 @@ export async function PUT(req: Request) {
     "metaEnabled",
     "metaAppId",
     "metaGraphVersion",
+    "storePaymentsEnabled",
   ] as const) {
     if (d[field] !== undefined) data[field] = d[field];
   }
@@ -134,7 +156,15 @@ export async function PUT(req: Request) {
   const appIdChanged =
     newAppId !== undefined && Boolean(existing?.metaAppId) && newAppId !== existing?.metaAppId;
 
-  await savePlatformSettings({ ...data, updatedByEmail: guard.user.email });
+  try {
+    await savePlatformSettings({ ...data, updatedByEmail: guard.user.email });
+  } catch (error) {
+    console.error("platform settings save", error);
+    return NextResponse.json(
+      { error: "Could not write platform settings. Check the database and try again." },
+      { status: 500 }
+    );
+  }
 
   let flaggedPages = 0;
   if (appIdChanged) {

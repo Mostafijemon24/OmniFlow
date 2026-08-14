@@ -188,3 +188,16 @@ export async function platformStripeSecretKey(): Promise<string | null> {
     return null;
   }
 }
+
+export async function platformStripeWebhookSecret(): Promise<string | null> {
+  const fromEnv = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+  if (fromEnv) return fromEnv;
+
+  const settings = await getPlatformSettings();
+  if (!settings?.stripeWebhookSecret) return null;
+  try {
+    return decrypt(settings.stripeWebhookSecret);
+  } catch {
+    return null;
+  }
+}

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useUi } from "@/components/providers/ui-provider";
+import { parseRate } from "@/lib/digits";
 
 type Settings = {
   stripe: {
@@ -89,6 +90,7 @@ export default function AdminSettingsPage() {
   const [saving, setSaving] = useState(false);
 
   const [stripeKey, setStripeKey] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
   const [prices, setPrices] = useState({ starter: "", pro: "", agency: "" });
   const [bkash, setBkash] = useState({ number: "", instructions: "", usdRate: "" });
   const [meta, setMeta] = useState({ appId: "", appSecret: "", verifyToken: "", graphVersion: "" });
@@ -132,7 +134,11 @@ export default function AdminSettingsPage() {
         });
         const data = await res.json();
         if (!res.ok) {
-          triggerToast(data.error || "Could not save the setting.");
+          triggerToast(
+            res.status === 404
+              ? "Session expired. Sign out, sign in, then save again."
+              : data.error || "Could not save the setting."
+          );
           return;
         }
         triggerToast(
@@ -141,6 +147,7 @@ export default function AdminSettingsPage() {
             : successMessage
         );
         setStripeKey("");
+        setWebhookSecret("");
         await load();
       } catch {
         triggerToast("Could not reach the server.");
@@ -224,19 +231,19 @@ export default function AdminSettingsPage() {
         <div className="grid gap-3 md:grid-cols-3">
           <Field
             label="Starter price ID"
-            placeholder="price_…"
+            placeholder="price_1ABC…"
             value={prices.starter}
             onChange={(e) => setPrices({ ...prices, starter: e.target.value })}
           />
           <Field
             label="Pro price ID"
-            placeholder="price_…"
+            placeholder="price_1ABC…"
             value={prices.pro}
             onChange={(e) => setPrices({ ...prices, pro: e.target.value })}
           />
           <Field
             label="Agency price ID"
-            placeholder="price_…"
+            placeholder="price_1ABC…"
             value={prices.agency}
             onChange={(e) => setPrices({ ...prices, agency: e.target.value })}
           />
@@ -258,7 +265,8 @@ export default function AdminSettingsPage() {
           Save price IDs
         </button>
         <p className="text-[10px] text-slate-500">
-          A plan without a price ID cannot be bought with Stripe, even when the key is valid.
+          A plan without a Stripe Price ID cannot be bought with a card. Open Stripe Dashboard →
+          Product → copy the ID that starts with price_. The plan amount (12, 26, 88) is not the ID.
         </p>
 
         <div className="rounded-xl border border-slate-800 bg-dark-950 p-3">
@@ -269,8 +277,27 @@ export default function AdminSettingsPage() {
             <Status ok={settings.stripe.webhookSecretSet} on="SECRET SET" off="STRIPE_WEBHOOK_SECRET MISSING" />
           </div>
           <code className="break-all text-[11px] text-slate-300">{settings.urls.stripeWebhook}</code>
+          <div className="mt-3 flex gap-2">
+            <input
+              type="password"
+              placeholder={
+                settings.stripe.webhookSecretSet ? "whsec_… (replace)" : "whsec_… from Stripe webhook"
+              }
+              value={webhookSecret}
+              onChange={(e) => setWebhookSecret(e.target.value)}
+              className="flex-1 rounded-xl border border-slate-800 bg-dark-950 px-3 py-2 text-xs text-white focus:outline-none"
+            />
+            <button
+              onClick={() => save({ stripeWebhookSecret: webhookSecret }, "Stripe webhook secret saved.")}
+              disabled={saving || !webhookSecret}
+              className="rounded-xl bg-brand-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+            >
+              Save secret
+            </button>
+          </div>
           <p className="mt-1 text-[10px] text-slate-500">
-            The signing secret comes from the Stripe dashboard, so it stays in the environment.
+            Stripe Dashboard → Developers → Webhooks → add the URL above → copy the Signing secret
+            (whsec_…).
           </p>
         </div>
       </section>
@@ -286,7 +313,17 @@ export default function AdminSettingsPage() {
 
         <Toggle
           checked={settings.bkash.enabled}
-          onChange={(v) => save({ bkashEnabled: v }, v ? "bKash enabled." : "bKash disabled.")}
+          onChange={(v) =>
+            save(
+              {
+                bkashEnabled: v,
+                bkashNumber: bkash.number,
+                bkashInstructions: bkash.instructions,
+                bkashUsdRate: parseRate(bkash.usdRate) || 0,
+              },
+              v ? "bKash enabled." : "bKash disabled."
+            )
+          }
           label="Offer bKash at checkout"
         />
 
@@ -324,7 +361,7 @@ export default function AdminSettingsPage() {
               {
                 bkashNumber: bkash.number,
                 bkashInstructions: bkash.instructions,
-                bkashUsdRate: bkash.usdRate ? Number(bkash.usdRate) : 0,
+                bkashUsdRate: parseRate(bkash.usdRate) || 0,
               },
               "bKash details saved."
             )
@@ -431,10 +468,19 @@ export default function AdminSettingsPage() {
         <h3 className="border-b border-slate-800 pb-2.5 text-xs font-bold uppercase tracking-wider text-white">
           Creator store payments
         </h3>
+        <Toggle
+          checked={settings.storePaymentsEnabled}
+          onChange={(v) =>
+            save(
+              { storePaymentsEnabled: v },
+              v ? "Store checkout is on." : "Store checkout is off."
+            )
+          }
+          label="Let buyers pay for products on public stores using Stripe / bKash"
+        />
         <p className="mt-3 text-xs text-slate-400">
-          Selling creator products through a platform gateway is not enabled in this release. Paid
-          products cannot be bought and free products are delivered as normal. There is nothing to
-          configure here yet.
+          Turn this on after Stripe or bKash is live. Paid products then use the same gateways as
+          plan checkout. Free products still deliver without payment.
         </p>
       </section>
     </div>

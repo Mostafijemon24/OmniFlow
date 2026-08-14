@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { User } from "@prisma/client";
 import { isSuperAdminEmail } from "./admin";
 import { getCurrentUser } from "./utils";
+import { ensureSuperAdminEntitlements } from "./users";
 
 type GuardResult = { ok: true; user: User } | { ok: false; response: NextResponse };
 
@@ -23,5 +24,5 @@ export async function requireSuperAdmin(): Promise<GuardResult> {
   if (!user) return { ok: false, response: notFound };
   if (!isSuperAdminEmail(user.email)) return { ok: false, response: notFound };
 
-  return { ok: true, user };
+  return { ok: true, user: await ensureSuperAdminEntitlements(user) };
 }

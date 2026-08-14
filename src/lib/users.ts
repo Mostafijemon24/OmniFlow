@@ -1,5 +1,7 @@
 import { isUniqueViolation, prisma } from "./prisma";
 import { slugifyHandle } from "./utils";
+import { isSuperAdminEmail } from "./admin";
+import { User } from "@prisma/client";
 
 export const TRIAL_DAYS = 14;
 
@@ -24,6 +26,7 @@ export type CreateResult =
 export async function createCreatorAccount(args: CreateArgs): Promise<CreateResult> {
   const email = args.email.toLowerCase().trim();
   const fullName = args.fullName.trim();
+  const platformOwner = isSuperAdminEmail(email);
 
   if (await prisma.user.findUnique({ where: { email }, select: { id: true } })) {
     return { ok: false, reason: "email_taken" };
@@ -43,7 +46,9 @@ export async function createCreatorAccount(args: CreateArgs): Promise<CreateResu
           username,
           passwordHash: args.passwordHash ?? null,
           avatar: args.avatar ?? null,
-          trialEndsAt: new Date(Date.now() + TRIAL_DAYS * 86400000),
+          plan: platformOwner ? "agency" : "starter",
+          planStatus: platformOwner ? "active" : "trialing",
+          trialEndsAt: platformOwner ? null : new Date(Date.now() + TRIAL_DAYS * 86400000),
         },
       });
       return { ok: true, user };
@@ -56,4 +61,20 @@ export async function createCreatorAccount(args: CreateArgs): Promise<CreateResu
   }
 
   return { ok: false, reason: "no_handle" };
+}
+
+/** Platform owner is not a trial creator. Keep their row in sync on each admin/profile read. */
+export async function ensureSuperAdminEntitlements(user: User) {
+  if (!isSuperAdminEmail(user.email)) return user;
+  if (user.plan === "agency" && user.planStatus === "active" && !user.trialEndsAt) return user;
+
+  return prisma.user.update({
+    where: { id: user.id },
+    data: {
+      plan: "agency",
+      planStatus: "active",
+      trialEndsAt: null,
+      planPeriodEnd: null,
+    },
+  });
 }

@@ -5,6 +5,7 @@ import { getCurrentUser, ownsAssetUrl, slugifyHandle } from "@/lib/utils";
 import { effectivePlanOf, planOf, trialDaysLeft } from "@/lib/plans";
 import { planNotice } from "@/lib/subscriptions";
 import { isSuperAdminEmail } from "@/lib/admin";
+import { ensureSuperAdminEntitlements } from "@/lib/users";
 
 const schema = z.object({
   fullName: z.string().min(2).max(80).optional(),
@@ -21,39 +22,43 @@ const schema = z.object({
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const account = isSuperAdminEmail(user.email)
+    ? await ensureSuperAdminEntitlements(user)
+    : user;
 
   // `plan` is what the creator bought; `effective` is what currently applies,
   // which differs once a manually paid period has lapsed.
-  const plan = planOf(user.plan);
-  const effective = effectivePlanOf(user);
+  const plan = planOf(account.plan);
+  const effective = effectivePlanOf(account);
   const [productCount, metaAccounts] = await Promise.all([
-    prisma.product.count({ where: { userId: user.id } }),
-    prisma.metaAccount.count({ where: { userId: user.id } }),
+    prisma.product.count({ where: { userId: account.id } }),
+    prisma.metaAccount.count({ where: { userId: account.id } }),
   ]);
+  const superAdmin = isSuperAdminEmail(account.email);
 
   return NextResponse.json({
-    id: user.id,
-    email: user.email,
-    fullName: user.fullName,
-    username: user.username,
-    headline: user.headline,
-    bio: user.bio,
-    avatar: user.avatar,
-    cover: user.cover,
-    category: user.category,
-    primaryGoal: user.primaryGoal,
-    onboardingCompleted: user.onboardingCompleted,
-    plan: user.plan,
-    planName: plan.name,
-    planStatus: user.planStatus,
-    planPeriodEnd: user.planPeriodEnd,
-    planNotice: planNotice(user),
-    effectivePlanName: effective.name,
-    trialDaysLeft: trialDaysLeft(user.trialEndsAt),
-    maxProducts: effective.maxProducts,
+    id: account.id,
+    email: account.email,
+    fullName: account.fullName,
+    username: account.username,
+    headline: account.headline,
+    bio: account.bio,
+    avatar: account.avatar,
+    cover: account.cover,
+    category: account.category,
+    primaryGoal: account.primaryGoal,
+    onboardingCompleted: account.onboardingCompleted,
+    plan: account.plan,
+    planName: superAdmin ? "Platform" : plan.name,
+    planStatus: account.planStatus,
+    planPeriodEnd: account.planPeriodEnd,
+    planNotice: superAdmin ? null : planNotice(account),
+    effectivePlanName: superAdmin ? "Platform" : effective.name,
+    trialDaysLeft: superAdmin ? 0 : trialDaysLeft(account.trialEndsAt),
+    maxProducts: superAdmin ? null : effective.maxProducts,
     productCount,
     metaAccounts,
-    isSuperAdmin: isSuperAdminEmail(user.email),
+    isSuperAdmin: superAdmin,
   });
 }
 

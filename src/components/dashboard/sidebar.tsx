@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { Profile } from "@/lib/types";
 import { initialsAvatar } from "@/lib/format";
-import { cachedJson, DASHBOARD_ROUTES, peekCache } from "@/lib/client-cache";
+import { cachedJson, DASHBOARD_ROUTES, invalidateCache, peekCache } from "@/lib/client-cache";
 
 type NavItem = {
   href: string;
@@ -52,6 +52,7 @@ export function DashboardSidebar() {
 
   useEffect(() => {
     let active = true;
+    if (isSuperAdmin) invalidateCache("/api/profile");
 
     cachedJson<Profile & { error?: string }>("/api/profile").then((data) => {
       if (active && data && !data.error) setProfile(data);
@@ -123,7 +124,7 @@ export function DashboardSidebar() {
             </div>
           </div>
 
-          {profile.planStatus === "trialing" && (
+          {profile.planStatus === "trialing" && !isSuperAdmin && (
             <p className="rounded-lg bg-amber-500/10 px-2 py-1.5 text-[10px] font-semibold text-amber-400">
               {profile.trialDaysLeft
                 ? `${profile.trialDaysLeft} days left in trial`
@@ -131,7 +132,7 @@ export function DashboardSidebar() {
             </p>
           )}
 
-          {profile.planNotice && profile.planNotice.level !== "active" && (
+          {profile.planNotice && profile.planNotice.level !== "active" && !isSuperAdmin && (
             <Link
               href="/dashboard/plans"
               className={`block rounded-lg px-2 py-1.5 text-[10px] font-semibold ${

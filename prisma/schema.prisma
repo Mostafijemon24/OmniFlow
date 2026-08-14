@@ -21,6 +21,7 @@ model PlatformSettings {
   stripePriceStarter String?
   stripePricePro     String?
   stripePriceAgency  String?
+  stripeWebhookSecret String? // encrypted; env STRIPE_WEBHOOK_SECRET still wins if set
 
   // bKash — manual transfer to a personal number, verified by the admin.
   bkashEnabled      Boolean @default(false)

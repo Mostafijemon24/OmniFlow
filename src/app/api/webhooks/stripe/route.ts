@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { stripeForWebhooks } from "@/lib/stripe";
 import { fulfillOrder } from "@/lib/fulfillment";
 import { PLANS, PlanId } from "@/lib/plans";
+import { platformStripeWebhookSecret } from "@/lib/platform-settings";
 
 export const runtime = "nodejs";
 
@@ -12,10 +13,10 @@ export async function POST(req: Request) {
   // Signature verification is local HMAC, so it works before the admin has
   // configured a Stripe API key. Only the signing secret is required.
   const stripe = stripeForWebhooks();
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  const secret = await platformStripeWebhookSecret();
   if (!secret) {
     return NextResponse.json(
-      { error: "STRIPE_WEBHOOK_SECRET is not set on this deployment." },
+      { error: "Stripe webhook secret is not set. Add it in Platform Setup." },
       { status: 409 }
     );
   }
