@@ -113,10 +113,19 @@ export const authOptions: NextAuthOptions = {
           .onboardingCompleted;
       }
       if (trigger === "update" && session) {
-        token.username = session.username ?? token.username;
-        token.onboardingCompleted =
-          session.onboardingCompleted ?? token.onboardingCompleted;
-        token.name = session.name ?? token.name;
+        const patch = session as {
+          username?: string;
+          onboardingCompleted?: boolean;
+          name?: string;
+          user?: { username?: string; onboardingCompleted?: boolean; name?: string };
+        };
+        token.username = patch.username ?? patch.user?.username ?? token.username;
+        token.name = patch.name ?? patch.user?.name ?? token.name;
+        if (typeof patch.onboardingCompleted === "boolean") {
+          token.onboardingCompleted = patch.onboardingCompleted;
+        } else if (typeof patch.user?.onboardingCompleted === "boolean") {
+          token.onboardingCompleted = patch.user.onboardingCompleted;
+        }
       }
 
       // Recomputed on every call, after the client-supplied `update` merge

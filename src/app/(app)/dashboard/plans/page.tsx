@@ -23,8 +23,15 @@ export default function PlansPage() {
       <div>
         <h2 className="text-sm font-black text-white">Choose your plan</h2>
         <p className="mt-1 text-xs text-slate-400">
-          Plans set how many products you can publish and how many Auto-DMs you can send each month.
+          Card checkout uses Stripe. bKash is a manual transfer that we verify. You can also skip
+          and keep using the 14-day trial from the studio.
         </p>
+        <Link
+          href="/dashboard"
+          className="mt-3 inline-flex text-[11px] font-bold text-brand-400 hover:text-brand-300"
+        >
+          Skip for now → open studio
+        </Link>
       </div>
 
       {profile?.planNotice && profile.planNotice.level !== "active" && (

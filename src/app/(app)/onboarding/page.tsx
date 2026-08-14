@@ -69,8 +69,8 @@ export default function OnboardingPage() {
       return;
     }
     await update({ username: data.username, onboardingCompleted: true });
-    triggerToast("Onboarding complete! Welcome to your dashboard.");
-    router.push("/dashboard");
+    triggerToast("Onboarding complete. Choose a plan or continue on the trial.");
+    window.location.assign("/dashboard/plans");
   }
 
   return (
@@ -183,7 +183,7 @@ export default function OnboardingPage() {
               disabled={saving || !username}
               className="w-full rounded-xl bg-emerald-600 py-3 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
             >
-              {saving ? "Saving..." : "🚀 Enter Dashboard Studio"}
+              {saving ? "Saving..." : "Continue to plans"}
             </button>
           </div>
         )}

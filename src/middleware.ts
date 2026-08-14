@@ -22,9 +22,6 @@ export default withAuth(
     }
 
     const onboarded = Boolean(req.nextauth.token?.onboardingCompleted);
-    if (pathname.startsWith("/dashboard") && !onboarded) {
-      return NextResponse.redirect(new URL("/onboarding", req.url));
-    }
     if (pathname === "/onboarding" && onboarded) {
       return NextResponse.redirect(new URL("/dashboard", req.url));
     }

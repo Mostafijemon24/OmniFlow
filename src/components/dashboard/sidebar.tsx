@@ -22,7 +22,7 @@ const nav: NavItem[] = [
   { href: "/dashboard/orders", label: "Orders & CRM", icon: "fa-receipt", counter: "orders" },
   { href: "/dashboard/analytics", label: "Funnel Analytics", icon: "fa-chart-pie" },
   { href: "/dashboard/connections", label: "Connections", icon: "fa-plug", counter: "meta" },
-  { href: "/dashboard/plans", label: "Plans", icon: "fa-rocket" },
+  { href: "/dashboard/plans", label: "Plans & checkout", icon: "fa-rocket" },
   { href: "/dashboard/billing", label: "Billing", icon: "fa-credit-card" },
   { href: "/dashboard/admin", label: "Platform Setup", icon: "fa-shield-halved", adminOnly: true },
 ];
