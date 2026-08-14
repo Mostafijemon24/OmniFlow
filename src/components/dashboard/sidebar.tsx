@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { Profile } from "@/lib/types";
 import { initialsAvatar } from "@/lib/format";
+import { cachedJson, DASHBOARD_ROUTES, peekCache } from "@/lib/client-cache";
 
 type NavItem = {
   href: string;
@@ -26,25 +27,39 @@ const nav: NavItem[] = [
   { href: "/dashboard/admin", label: "Platform Setup", icon: "fa-shield-halved", adminOnly: true },
 ];
 
+function profileFromCache() {
+  const data = peekCache<Profile & { error?: string }>("/api/profile");
+  return data && !data.error ? data : null;
+}
+
 export function DashboardSidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { data: session } = useSession();
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [orderCount, setOrderCount] = useState<number | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(profileFromCache);
+  const [orderCount, setOrderCount] = useState<number | null>(() => {
+    const data = peekCache<{ total?: number }>("/api/orders?status=ALL");
+    return typeof data?.total === "number" ? data.total : null;
+  });
   const isSuperAdmin = Boolean(session?.user?.isSuperAdmin);
+
+  useEffect(() => {
+    for (const href of DASHBOARD_ROUTES) {
+      if (href.startsWith("/dashboard/admin") && !isSuperAdmin) continue;
+      router.prefetch(href);
+    }
+  }, [router, isSuperAdmin]);
 
   useEffect(() => {
     let active = true;
 
-    fetch("/api/profile")
-      .then((r) => r.json())
-      .then((data) => active && !data.error && setProfile(data))
-      .catch(() => undefined);
+    cachedJson<Profile & { error?: string }>("/api/profile").then((data) => {
+      if (active && data && !data.error) setProfile(data);
+    });
 
-    fetch("/api/orders")
-      .then((r) => r.json())
-      .then((data) => active && setOrderCount(typeof data.total === "number" ? data.total : null))
-      .catch(() => undefined);
+    cachedJson<{ total?: number }>("/api/orders?status=ALL").then((data) => {
+      if (active && typeof data.total === "number") setOrderCount(data.total);
+    });
 
     return () => {
       active = false;

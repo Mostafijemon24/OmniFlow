@@ -3,24 +3,26 @@
 import { useEffect, useState } from "react";
 import { Analytics } from "@/lib/types";
 import { formatRevenue, relativeTime } from "@/lib/format";
+import { cachedJson, peekCache } from "@/lib/client-cache";
 
 const RANGES = [7, 30, 90];
 
 export default function AnalyticsPage() {
   const [days, setDays] = useState(30);
-  const [stats, setStats] = useState<Analytics | null>(null);
+  const [stats, setStats] = useState<Analytics | null>(
+    () => peekCache<Analytics>(`/api/analytics?days=30`) ?? null
+  );
   const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
     setError("");
 
-    fetch(`/api/analytics?days=${days}`)
-      .then(async (res) => {
-        const data = await res.json();
+    cachedJson<Analytics & { error?: string }>(`/api/analytics?days=${days}`)
+      .then((data) => {
         if (!active) return;
-        if (!res.ok) {
-          setError(data.error || "Could not load analytics.");
+        if (data.error && data.days === undefined) {
+          setError(data.error);
           return;
         }
         setStats(data);
@@ -33,7 +35,7 @@ export default function AnalyticsPage() {
   }, [days]);
 
   if (error) return <p className="text-xs text-red-400">{error}</p>;
-  if (!stats) return <p className="text-xs text-slate-400">Loading analytics...</p>;
+  if (!stats) return null;
 
   const funnel = [
     { label: "1. Comments Detected", value: stats.commentsDetected, color: "text-white" },

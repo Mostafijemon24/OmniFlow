@@ -151,9 +151,7 @@ export default function AdminSettingsPage() {
     [load, triggerToast]
   );
 
-  if (!settings) {
-    return <p className="text-xs text-slate-400">Loading platform settings…</p>;
-  }
+  if (!settings) return null;
 
   const stripeReady = settings.stripe.enabled && settings.stripe.secretKeySet;
   const bkashReady =

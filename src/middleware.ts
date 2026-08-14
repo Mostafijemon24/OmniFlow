@@ -20,6 +20,15 @@ export default withAuth(
     if (!isAdmin && ADMIN_PAGES.some((prefix) => pathname.startsWith(prefix))) {
       return NextResponse.redirect(new URL("/dashboard", req.url));
     }
+
+    const onboarded = Boolean(req.nextauth.token?.onboardingCompleted);
+    if (pathname.startsWith("/dashboard") && !onboarded) {
+      return NextResponse.redirect(new URL("/onboarding", req.url));
+    }
+    if (pathname === "/onboarding" && onboarded) {
+      return NextResponse.redirect(new URL("/dashboard", req.url));
+    }
+
     return NextResponse.next();
   },
   {

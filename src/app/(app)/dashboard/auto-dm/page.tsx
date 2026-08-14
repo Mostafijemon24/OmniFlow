@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AutoRule, MetaAccount, Product } from "@/lib/types";
 import { useUi } from "@/components/providers/ui-provider";
+import { cachedJson, invalidateCache, peekCache } from "@/lib/client-cache";
 
 type SimResult = {
   rule: { keyword: string; platform: string; autoMessage: string };
@@ -14,9 +15,18 @@ type SimResult = {
 
 export default function AutoDmPage() {
   const { triggerToast } = useUi();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [rules, setRules] = useState<AutoRule[]>([]);
-  const [accounts, setAccounts] = useState<MetaAccount[]>([]);
+  const [products, setProducts] = useState<Product[]>(() => {
+    const data = peekCache<Product[]>("/api/products");
+    return Array.isArray(data) ? data : [];
+  });
+  const [rules, setRules] = useState<AutoRule[]>(() => {
+    const data = peekCache<AutoRule[]>("/api/auto-dm");
+    return Array.isArray(data) ? data : [];
+  });
+  const [accounts, setAccounts] = useState<MetaAccount[]>(() => {
+    const data = peekCache<{ accounts?: MetaAccount[] }>("/api/meta/accounts");
+    return data?.accounts ?? [];
+  });
   const [form, setForm] = useState({
     platform: "facebook",
     keyword: "",
@@ -30,9 +40,9 @@ export default function AutoDmPage() {
 
   const load = useCallback(async () => {
     const [prods, ruleRows, meta] = await Promise.all([
-      fetch("/api/products").then((r) => r.json()),
-      fetch("/api/auto-dm").then((r) => r.json()),
-      fetch("/api/meta/accounts").then((r) => r.json()),
+      cachedJson<Product[]>("/api/products"),
+      cachedJson<AutoRule[]>("/api/auto-dm"),
+      cachedJson<{ accounts?: MetaAccount[] }>("/api/meta/accounts"),
     ]);
     const list: Product[] = Array.isArray(prods) ? prods : [];
     setProducts(list);
@@ -61,6 +71,7 @@ export default function AutoDmPage() {
     }
     setForm({ ...form, keyword: "", autoMessage: "" });
     triggerToast(`Keyword ${data.keyword} is now live.`);
+    invalidateCache("/api/auto-dm");
     load();
   }
 
@@ -74,6 +85,7 @@ export default function AutoDmPage() {
       triggerToast(`Could not ${rule.active ? "pause" : "resume"} ${rule.keyword}.`);
       return;
     }
+    invalidateCache("/api/auto-dm");
     load();
   }
 
@@ -84,6 +96,7 @@ export default function AutoDmPage() {
       return;
     }
     triggerToast(`Rule ${rule.keyword} removed.`);
+    invalidateCache("/api/auto-dm");
     load();
   }
 

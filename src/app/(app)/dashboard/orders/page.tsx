@@ -4,30 +4,52 @@ import { useCallback, useEffect, useState } from "react";
 import { CurrencyTotal, OrderRow } from "@/lib/types";
 import { formatDateTime, formatRevenue, relativeTime } from "@/lib/format";
 import { useUi } from "@/components/providers/ui-provider";
+import { cachedJson, invalidateCache, peekCache } from "@/lib/client-cache";
 
 const STATUSES = ["ALL", "PAID", "PENDING", "FAILED", "REFUNDED"];
 
+function ordersKey(status: string, q: string) {
+  const params = new URLSearchParams({ status });
+  if (q) params.set("q", q);
+  return `/api/orders?${params}`;
+}
+
 export default function OrdersPage() {
   const { triggerToast } = useUi();
-  const [orders, setOrders] = useState<OrderRow[]>([]);
-  const [revenue, setRevenue] = useState<CurrencyTotal[]>([]);
-  const [total, setTotal] = useState(0);
-  const [truncated, setTruncated] = useState(false);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("ALL");
-  const [loading, setLoading] = useState(true);
+  const [orders, setOrders] = useState<OrderRow[]>(() => {
+    const data = peekCache<{ orders?: OrderRow[] }>(ordersKey("ALL", ""));
+    return data?.orders ?? [];
+  });
+  const [revenue, setRevenue] = useState<CurrencyTotal[]>(() => {
+    const data = peekCache<{ revenue?: CurrencyTotal[] }>(ordersKey("ALL", ""));
+    return data?.revenue ?? [];
+  });
+  const [total, setTotal] = useState(() => {
+    const data = peekCache<{ total?: number }>(ordersKey("ALL", ""));
+    return data?.total ?? 0;
+  });
+  const [truncated, setTruncated] = useState(() => {
+    const data = peekCache<{ truncated?: boolean }>(ordersKey("ALL", ""));
+    return Boolean(data?.truncated);
+  });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const params = new URLSearchParams({ status });
-    if (q) params.set("q", q);
+    const url = ordersKey(status, q);
 
     try {
-      const res = await fetch(`/api/orders?${params}`);
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Could not load orders.");
+      const data = await cachedJson<{
+        error?: string;
+        orders?: OrderRow[];
+        revenue?: CurrencyTotal[];
+        total?: number;
+        truncated?: boolean;
+      }>(url);
+      if (data.error && !data.orders) {
+        setError(data.error);
         return;
       }
       setError("");
@@ -37,8 +59,6 @@ export default function OrdersPage() {
       setTruncated(Boolean(data.truncated));
     } catch {
       setError("Could not reach the orders service.");
-    } finally {
-      setLoading(false);
     }
   }, [q, status]);
 
@@ -55,6 +75,7 @@ export default function OrdersPage() {
     triggerToast(
       res.ok ? `Delivery email re-sent to ${order.customerEmail}` : data.error || "Re-send failed."
     );
+    invalidateCache("/api/orders");
     load();
   }
 
@@ -103,8 +124,6 @@ export default function OrdersPage() {
 
         {error ? (
           <p className="py-8 text-center text-xs text-red-400">{error}</p>
-        ) : loading ? (
-          <p className="py-8 text-center text-xs text-slate-400">Loading orders...</p>
         ) : orders.length === 0 ? (
           <p className="py-8 text-center text-xs text-slate-400">
             No orders match this view yet.

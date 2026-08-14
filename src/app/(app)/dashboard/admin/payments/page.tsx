@@ -117,8 +117,6 @@ export default function AdminPaymentsPage() {
         ))}
       </div>
 
-      {loading && <p className="text-xs text-slate-400">Loading…</p>}
-
       {!loading && payments.length === 0 && (
         <p className="rounded-2xl border border-dashed border-slate-700 p-8 text-center text-xs text-slate-400">
           {tab === "PENDING"

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ManualPayment, Profile } from "@/lib/types";
 import { useUi } from "@/components/providers/ui-provider";
+import { cachedJson, peekCache } from "@/lib/client-cache";
 
 const STATUS_STYLE: Record<string, string> = {
   PENDING: "bg-amber-500/20 text-amber-400",
@@ -15,17 +16,22 @@ const STATUS_STYLE: Record<string, string> = {
 export default function BillingPage() {
   const { triggerToast } = useUi();
   const params = useSearchParams();
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [payments, setPayments] = useState<ManualPayment[]>([]);
+  const [profile, setProfile] = useState<Profile | null>(() => {
+    const data = peekCache<Profile & { error?: string }>("/api/profile");
+    return data && !data.error ? data : null;
+  });
+  const [payments, setPayments] = useState<ManualPayment[]>(() => {
+    const data = peekCache<{ payments?: ManualPayment[] }>("/api/payments/manual");
+    return data?.payments ?? [];
+  });
 
   const load = useCallback(async () => {
-    const [profileRes, paymentsRes] = await Promise.all([
-      fetch("/api/profile"),
-      fetch("/api/payments/manual"),
+    const [profileData, paymentsData] = await Promise.all([
+      cachedJson<Profile & { error?: string }>("/api/profile"),
+      cachedJson<{ payments?: ManualPayment[] }>("/api/payments/manual"),
     ]);
-    const profileData = await profileRes.json();
     if (!profileData.error) setProfile(profileData);
-    if (paymentsRes.ok) setPayments((await paymentsRes.json()).payments ?? []);
+    setPayments(paymentsData.payments ?? []);
   }, []);
 
   useEffect(() => {

@@ -8,12 +8,23 @@ import { useUi } from "@/components/providers/ui-provider";
 import { ProductEditor } from "@/components/dashboard/product-editor";
 import { SlotManager } from "@/components/dashboard/slot-manager";
 import { formatBytes, initialsAvatar } from "@/lib/format";
+import { cachedJson, invalidateCache, peekCache, setCache } from "@/lib/client-cache";
+
+function cachedProfile() {
+  const data = peekCache<Profile & { error?: string }>("/api/profile");
+  return data && !data.error ? data : null;
+}
+
+function cachedProducts() {
+  const data = peekCache<Product[]>("/api/products");
+  return Array.isArray(data) ? data : [];
+}
 
 export default function StoreBuilderPage() {
   const { triggerToast } = useUi();
   const { update } = useSession();
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [profile, setProfile] = useState<Profile | null>(cachedProfile);
+  const [products, setProducts] = useState<Product[]>(cachedProducts);
   const [editing, setEditing] = useState<Product | null | undefined>(undefined);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [status, setStatus] = useState("");
@@ -22,14 +33,14 @@ export default function StoreBuilderPage() {
 
   // Persisted values, so blurring a field the creator did not touch does not
   // fire a needless save, and so a failed save can be reverted precisely.
-  const saved = useRef<Partial<Profile>>({});
+  const saved = useRef<Partial<Profile>>(cachedProfile() || {});
   const pending = useRef(0);
 
   const load = useCallback(async () => {
     try {
       const [p, prods] = await Promise.all([
-        fetch("/api/profile").then((r) => r.json()),
-        fetch("/api/products").then((r) => r.json()),
+        cachedJson<Profile & { error?: string }>("/api/profile"),
+        cachedJson<Product[]>("/api/products"),
       ]);
       if (p.error) throw new Error(p.error);
       setProfile(p);
@@ -73,11 +84,13 @@ export default function StoreBuilderPage() {
     if (!res.ok) {
       setStatus("");
       triggerToast(data.error || "Could not save profile.");
+      invalidateCache("/api/profile");
       await load();
       return;
     }
 
     saved.current = { ...saved.current, ...patch };
+    setCache("/api/profile", { ...saved.current });
     setStatus("Saved");
     if (patch.username) await update({ username: data.username });
   }
@@ -106,6 +119,7 @@ export default function StoreBuilderPage() {
       return;
     }
     triggerToast(data.message || "Product deleted.");
+    invalidateCache("/api/products");
     load();
   }
 
@@ -119,6 +133,7 @@ export default function StoreBuilderPage() {
       const data = await res.json().catch(() => ({}));
       triggerToast(data.error || "Could not change visibility.");
     }
+    invalidateCache("/api/products");
     load();
   }
 
@@ -133,9 +148,7 @@ export default function StoreBuilderPage() {
           Retry
         </button>
       </div>
-    ) : (
-      <p className="text-xs text-slate-400">Loading your studio...</p>
-    );
+    ) : null;
   }
 
   const avatar = profile.avatar || initialsAvatar(profile.fullName);
@@ -366,6 +379,7 @@ export default function StoreBuilderPage() {
           onSaved={(msg) => {
             setEditing(undefined);
             triggerToast(msg);
+            invalidateCache("/api/products");
             load();
           }}
         />

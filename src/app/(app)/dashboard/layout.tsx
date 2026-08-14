@@ -1,13 +1,6 @@
-import { getServerSession } from "next-auth";
-import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import { DashboardSidebar } from "@/components/dashboard/sidebar";
 
-export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) redirect("/");
-  if (!session.user.onboardingCompleted) redirect("/onboarding");
-
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <main className="mx-auto grid w-full max-w-7xl flex-1 grid-cols-1 gap-6 p-4 md:p-6 lg:grid-cols-12">
       <DashboardSidebar />

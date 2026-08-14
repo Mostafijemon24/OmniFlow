@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { MetaAccount } from "@/lib/types";
 import { useUi } from "@/components/providers/ui-provider";
+import { cachedJson, invalidateCache, peekCache } from "@/lib/client-cache";
 
 type SocialLink = { id: string; provider: string; email: string | null; name: string | null };
 
@@ -13,23 +14,42 @@ export default function ConnectionsPage() {
   const { triggerToast } = useUi();
   const params = useSearchParams();
   const [configured, setConfigured] = useState(true);
-  const [accounts, setAccounts] = useState<MetaAccount[]>([]);
-  const [social, setSocial] = useState<SocialState | null>(null);
+  const [accounts, setAccounts] = useState<MetaAccount[]>(() => {
+    const data = peekCache<{ accounts?: MetaAccount[]; configured?: boolean }>("/api/meta/accounts");
+    return data?.accounts ?? [];
+  });
+  const [social, setSocial] = useState<SocialState | null>(
+    () => peekCache<SocialState>("/api/account/social") ?? null
+  );
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [metaRes, socialRes] = await Promise.all([
-      fetch("/api/meta/accounts"),
-      fetch("/api/account/social"),
+    const [data, socialData] = await Promise.all([
+      cachedJson<{ configured?: boolean; accounts?: MetaAccount[] }>("/api/meta/accounts"),
+      cachedJson<SocialState>("/api/account/social"),
     ]);
-    const data = await metaRes.json();
     setConfigured(Boolean(data.configured));
     setAccounts(data.accounts || []);
-    if (socialRes.ok) setSocial(await socialRes.json());
+    if (socialData && !("error" in (socialData as { error?: string }))) setSocial(socialData);
   }, []);
 
+  async function refreshConnections() {
+    invalidateCache("/api/meta/accounts");
+    invalidateCache("/api/account/social");
+    await load();
+  }
+
   useEffect(() => {
+    if (
+      params.get("meta_connected") ||
+      params.get("link_ok") ||
+      params.get("link_error") ||
+      params.get("meta_error")
+    ) {
+      invalidateCache("/api/meta/accounts");
+      invalidateCache("/api/account/social");
+    }
     load();
     const connected = params.get("meta_connected");
     const skipped = params.get("meta_skipped");
@@ -50,7 +70,7 @@ export default function ConnectionsPage() {
     const data = await res.json();
     setBusy(null);
     triggerToast(res.ok ? "Facebook login unlinked." : data.error);
-    load();
+    refreshConnections();
   }
 
   async function setNewPassword() {
@@ -64,7 +84,7 @@ export default function ConnectionsPage() {
     setBusy(null);
     triggerToast(res.ok ? "Password set. You can now sign in with your email." : data.error);
     if (res.ok) setPassword("");
-    load();
+    refreshConnections();
   }
 
   async function subscribe(account: MetaAccount) {
@@ -73,7 +93,7 @@ export default function ConnectionsPage() {
     const data = await res.json();
     setBusy(null);
     triggerToast(res.ok ? `${account.pageName} is now receiving comment webhooks.` : data.error);
-    load();
+    refreshConnections();
   }
 
   async function disconnect(account: MetaAccount) {
@@ -81,7 +101,7 @@ export default function ConnectionsPage() {
     await fetch(`/api/meta/accounts/${account.id}`, { method: "DELETE" });
     setBusy(null);
     triggerToast(`${account.pageName} disconnected.`);
-    load();
+    refreshConnections();
   }
 
   return (

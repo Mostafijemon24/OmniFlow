@@ -4,13 +4,16 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Profile } from "@/lib/types";
 import { PLAN_LIST } from "@/lib/plans";
+import { cachedJson, peekCache } from "@/lib/client-cache";
 
 export default function PlansPage() {
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(() => {
+    const data = peekCache<Profile & { error?: string }>("/api/profile");
+    return data && !data.error ? data : null;
+  });
 
   useEffect(() => {
-    fetch("/api/profile")
-      .then((r) => r.json())
+    cachedJson<Profile & { error?: string }>("/api/profile")
       .then((data) => (data.error ? null : setProfile(data)))
       .catch(() => undefined);
   }, []);

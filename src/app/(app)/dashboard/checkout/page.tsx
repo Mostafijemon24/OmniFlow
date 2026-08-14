@@ -94,7 +94,7 @@ export default function PlanCheckoutPage() {
   if (error && !options) {
     return <p className="text-xs text-red-400">{error}</p>;
   }
-  if (!options) return <p className="text-xs text-slate-400">Loading…</p>;
+  if (!options) return null;
 
   const { plan } = options;
   const nothingAvailable = !options.stripe && !options.bkash;
