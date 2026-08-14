@@ -1,26 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import { useUi } from "@/components/providers/ui-provider";
 
 export function Header() {
   const pathname = usePathname();
-  const router = useRouter();
   const { data: session, status } = useSession();
   const { openAuth, triggerToast } = useUi();
   const isLanding = pathname === "/";
   const isDashboard = pathname.startsWith("/dashboard");
-
-  function handleOpenDashboard() {
-    if (!session) {
-      openAuth("login");
-      triggerToast("Please register or log in to access your creator dashboard.");
-      return;
-    }
-    router.push("/dashboard");
-  }
+  const storeHref = session?.user?.username ? `/${session.user.username}?preview=1` : "/";
 
   return (
     <header className="glass-card sticky top-0 z-40 flex items-center justify-between border-b border-slate-800 px-4 py-3.5 md:px-8">
@@ -55,15 +46,16 @@ export function Header() {
         {status === "loading" ? null : session ? (
           <div className="flex items-center gap-2">
             <Link
-              href={`/${session.user.username}`}
-              target="_blank"
+              href={storeHref}
+              prefetch
               className="flex items-center gap-2 rounded-xl border border-slate-700 bg-dark-900 px-3.5 py-1.5 text-xs font-bold text-slate-200 transition hover:bg-dark-800"
             >
               <i className="fa-solid fa-globe text-brand-400" />
               <span className="hidden sm:inline">My Store</span>
             </Link>
-            <button
-              onClick={handleOpenDashboard}
+            <Link
+              href="/dashboard"
+              prefetch
               className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition ${
                 isDashboard
                   ? "bg-brand-600 text-white shadow-lg shadow-brand-600/20"
@@ -72,7 +64,7 @@ export function Header() {
             >
               <i className="fa-solid fa-gauge" />
               <span>Creator Dashboard</span>
-            </button>
+            </Link>
             <button
               onClick={() => signOut({ callbackUrl: "/" })}
               title="Sign Out"

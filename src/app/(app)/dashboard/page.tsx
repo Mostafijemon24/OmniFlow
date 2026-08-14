@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { Product, Profile } from "@/lib/types";
 import { useUi } from "@/components/providers/ui-provider";
@@ -344,14 +345,13 @@ export default function StoreBuilderPage() {
                         {prod.price}
                       </span>
                     </div>
-                    <a
-                      href={`/${profile.username}?prod=${prod.id}`}
-                      target="_blank"
-                      rel="noreferrer"
+                    <Link
+                      href={`/${profile.username}?preview=1&prod=${prod.id}`}
+                      prefetch
                       className="rounded-md bg-brand-600 px-2.5 py-1 text-[10px] font-bold text-white"
                     >
                       Buy
-                    </a>
+                    </Link>
                   </div>
                 ))}
             </div>

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { useUi } from "@/components/providers/ui-provider";
 import { PLAN_LIST } from "@/lib/plans";
 
@@ -86,7 +86,6 @@ type PlatformStats = {
 export default function LandingPage() {
   const { openAuth, triggerToast } = useUi();
   const { data: session } = useSession();
-  const router = useRouter();
   const [monthlyComments, setMonthlyComments] = useState(1000);
   const [avgProductPrice, setAvgProductPrice] = useState(39);
   const [assumedConversion, setAssumedConversion] = useState(10);
@@ -137,9 +136,7 @@ export default function LandingPage() {
     if (!session) {
       openAuth("login");
       triggerToast("Please register or log in to access your creator dashboard.");
-      return;
     }
-    router.push("/dashboard");
   }
 
   return (
@@ -171,13 +168,24 @@ export default function LandingPage() {
             <span>Start Your 14-Day Free Trial</span>
             <i className="fa-solid fa-arrow-right" />
           </button>
-          <button
-            onClick={handleOpenDashboard}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-dark-900 px-8 py-4 text-sm font-bold text-slate-300 transition hover:bg-dark-800 sm:w-auto"
-          >
-            <i className="fa-solid fa-circle-play text-brand-400" />
-            <span>Explore Live Creator Studio</span>
-          </button>
+          {session ? (
+            <Link
+              href="/dashboard"
+              prefetch
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-dark-900 px-8 py-4 text-sm font-bold text-slate-300 transition hover:bg-dark-800 sm:w-auto"
+            >
+              <i className="fa-solid fa-circle-play text-brand-400" />
+              <span>Explore Live Creator Studio</span>
+            </Link>
+          ) : (
+            <button
+              onClick={handleOpenDashboard}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-dark-900 px-8 py-4 text-sm font-bold text-slate-300 transition hover:bg-dark-800 sm:w-auto"
+            >
+              <i className="fa-solid fa-circle-play text-brand-400" />
+              <span>Explore Live Creator Studio</span>
+            </button>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-4 pt-12 text-left md:grid-cols-4">

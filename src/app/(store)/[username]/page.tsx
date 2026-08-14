@@ -1,34 +1,17 @@
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
 import { PublicStore } from "@/components/store/public-store";
 import { storeGateways } from "@/lib/platform-settings";
 import { currencyToCode } from "@/lib/utils";
 import { Product } from "@/lib/types";
 
-export const dynamic = "force-dynamic";
-
 const RESERVED = new Set(["dashboard", "onboarding", "api", "auth", "favicon.ico"]);
 
-export async function generateMetadata({ params }: { params: { username: string } }) {
-  const user = await prisma.user.findUnique({
-    where: { username: params.username },
-    select: { fullName: true, bio: true, headline: true },
-  });
-  if (!user) return { title: "Store not found" };
-  return {
-    title: `${user.fullName} | OmniFlow Store`,
-    description: user.bio || user.headline || "OmniFlow creator storefront",
-  };
-}
-
-export default async function PublicBioPage({ params }: { params: { username: string } }) {
-  if (RESERVED.has(params.username)) notFound();
-
-  const user = await prisma.user.findUnique({
-    where: { username: params.username },
+const getCreator = cache(async (username: string) =>
+  prisma.user.findUnique({
+    where: { username },
     include: {
       products: {
         where: { active: true },
@@ -36,13 +19,33 @@ export default async function PublicBioPage({ params }: { params: { username: st
         orderBy: { createdAt: "desc" },
       },
     },
-  });
+  })
+);
+
+export async function generateMetadata({ params }: { params: { username: string } }) {
+  const user = await getCreator(params.username);
+  if (!user) return { title: "Store not found" };
+  return {
+    title: `${user.fullName} | OmniFlow Store`,
+    description: user.bio || user.headline || "OmniFlow creator storefront",
+  };
+}
+
+export default async function PublicBioPage({
+  params,
+  searchParams,
+}: {
+  params: { username: string };
+  searchParams: { preview?: string };
+}) {
+  if (RESERVED.has(params.username)) notFound();
+
+  const user = await getCreator(params.username);
   if (!user) notFound();
 
-  // A creator previewing their own storefront is not a visit.
-  const session = await getServerSession(authOptions);
-  if (session?.user?.id !== user.id) {
-    await prisma.funnelEvent.create({
+  // Preview links from the studio skip analytics and must not block first paint.
+  if (searchParams.preview !== "1") {
+    void prisma.funnelEvent.create({
       data: { userId: user.id, type: "bio_visit", metadata: params.username },
     });
   }
@@ -75,12 +78,14 @@ export default async function PublicBioPage({ params }: { params: { username: st
   // is resolved once per distinct currency rather than once for the store.
   const symbols = Array.from(new Set(products.map((p) => p.currency)));
   const gateways: Record<string, { stripe: boolean; bkash: boolean }> = {};
-  await Promise.all(
-    symbols.map(async (symbol) => {
-      const { stripe, bkash } = await storeGateways(currencyToCode(symbol));
-      gateways[symbol] = { stripe, bkash };
-    })
-  );
+  if (symbols.length) {
+    await Promise.all(
+      symbols.map(async (symbol) => {
+        const { stripe, bkash } = await storeGateways(currencyToCode(symbol));
+        gateways[symbol] = { stripe, bkash };
+      })
+    );
+  }
 
   return (
     <Suspense>

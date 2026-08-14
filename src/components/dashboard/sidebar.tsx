@@ -49,7 +49,7 @@ export function DashboardSidebar() {
     return () => {
       active = false;
     };
-  }, [pathname]);
+  }, []);
 
   const avatar = profile?.avatar || initialsAvatar(profile?.fullName || "OmniFlow");
   const visibleNav = nav.filter((item) => !item.adminOnly || isSuperAdmin);
@@ -70,6 +70,7 @@ export function DashboardSidebar() {
             <Link
               key={item.href}
               href={item.href}
+              prefetch
               className={`flex w-full items-center justify-between rounded-xl px-3.5 py-2.5 text-left text-xs font-bold transition ${
                 active
                   ? "bg-brand-600 text-white shadow-lg shadow-brand-600/20"
@@ -129,8 +130,8 @@ export function DashboardSidebar() {
           )}
 
           <Link
-            href={`/${profile.username}`}
-            target="_blank"
+            href={`/${profile.username}?preview=1`}
+            prefetch
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-800 bg-dark-900 py-2 text-xs font-bold text-slate-300 transition hover:bg-dark-800"
           >
             <i className="fa-solid fa-arrow-up-right-from-square text-brand-400" />

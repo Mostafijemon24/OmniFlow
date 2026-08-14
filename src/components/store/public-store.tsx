@@ -417,6 +417,12 @@ export function PublicStore({
           </div>
         </div>
       )}
+
+      <p className="pt-8 text-center text-[11px] text-slate-600">
+        <a href="/" className="transition hover:text-brand-400">
+          Powered by OmniFlow
+        </a>
+      </p>
     </div>
   );
 }

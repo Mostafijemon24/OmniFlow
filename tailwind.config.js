@@ -9,7 +9,7 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['"Plus Jakarta Sans"', "Inter", "sans-serif"],
+        sans: ["var(--font-sans)", "Inter", "sans-serif"],
       },
       colors: {
         brand: {

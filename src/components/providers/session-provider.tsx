@@ -7,7 +7,7 @@ import { Toast } from "@/components/layout/toast";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <SessionProvider>
+    <SessionProvider refetchOnWindowFocus={false} refetchWhenOffline={false}>
       <UiProvider>
         {children}
         <AuthModal />
